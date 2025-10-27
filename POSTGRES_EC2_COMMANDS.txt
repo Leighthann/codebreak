@@ -1,0 +1,568 @@
+===============================================================================
+CODEBREAK - COMPLETE DEPLOYMENT & MANAGEMENT REFERENCE
+===============================================================================
+Quick deployment scripts are at the bottom of this file.
+===============================================================================
+
+===============================================================================
+EC2 SERVER UPDATE WORKFLOW
+===============================================================================
+
+1. CONNECT TO EC2 SERVER
+   ssh -i "codebreak-key.pem" ubuntu@3.19.244.138
+
+2. PULL LATEST CODE FROM GITHUB
+   cd /home/ubuntu/codebreak
+   git pull origin master
+
+3. ACTIVATE VIRTUAL ENVIRONMENT
+   source venv/bin/activate
+
+4. UPDATE PYTHON DEPENDENCIES (if requirements.txt changed)
+   pip install -r backend/requirements.txt --upgrade
+
+5. RESTART THE SERVICE
+   sudo systemctl restart codebreak
+
+6. CHECK SERVICE STATUS
+   sudo systemctl status codebreak
+
+7. VIEW LIVE LOGS
+   sudo tail -f /var/log/codebreak-error.log
+   # Press Ctrl+C to stop viewing logs
+
+8. VIEW STANDARD OUTPUT LOGS
+   sudo tail -f /var/log/codebreak.log
+
+===============================================================================
+POSTGRESQL DATABASE COMMANDS
+===============================================================================
+
+CONNECTING TO DATABASE
+----------------------
+# Connect to PostgreSQL as specific user
+PGPASSWORD='%w>Iq3ry!' psql -h localhost -U codebreak_admin -d codebreak_db
+
+# Connect as postgres superuser
+sudo -u postgres psql
+
+# Connect to specific database
+sudo -u postgres psql -d codebreak_db
+
+
+DATABASE INFORMATION
+--------------------
+# List all databases
+\l
+
+# Connect to a database
+\c codebreak_db
+
+# List all tables in current database
+\dt
+
+# Describe a specific table structure
+\d users
+\d players
+\d leaderboard
+\d active_games
+\d game_players
+\d resource_transfers
+
+# List all schemas
+\dn
+
+# List all users/roles
+\du
+
+# Show current database and user
+SELECT current_database(), current_user;
+
+# Check database size
+SELECT pg_size_pretty(pg_database_size('codebreak_db'));
+
+
+QUERYING DATA
+-------------
+# View all users
+SELECT * FROM users;
+
+# View all players
+SELECT * FROM players;
+
+# View leaderboard (top 10)
+SELECT * FROM leaderboard ORDER BY score DESC LIMIT 10;
+
+# View active games
+SELECT * FROM active_games;
+
+# View game players
+SELECT * FROM game_players;
+
+# View resource transfers
+SELECT * FROM resource_transfers;
+
+# Count records in a table
+SELECT COUNT(*) FROM users;
+SELECT COUNT(*) FROM players;
+
+# Find specific user
+SELECT * FROM users WHERE username = 'testuser123';
+
+# View player inventory
+SELECT username, inventory FROM players WHERE username = 'testuser123';
+
+# Join players with their scores
+SELECT p.username, p.score, p.health, l.score as leaderboard_score
+FROM players p
+LEFT JOIN leaderboard l ON p.username = l.username;
+
+
+INSERTING DATA
+--------------
+# Insert a new user (manual - not recommended, use API)
+INSERT INTO users (username, hashed_password, created_at)
+VALUES ('testuser', '$2b$12$hash...', NOW());
+
+# Insert player data
+INSERT INTO players (username, health, x, y, score, inventory, created_at, last_login)
+VALUES ('testuser', 100, 0, 0, 0, '{"code_fragments": 0}', NOW(), NOW());
+
+
+UPDATING DATA
+-------------
+# Update player health
+UPDATE players SET health = 100 WHERE username = 'testuser123';
+
+# Update player score
+UPDATE players SET score = 1000 WHERE username = 'testuser123';
+
+# Update player inventory
+UPDATE players 
+SET inventory = '{"code_fragments": 10, "energy_cores": 5, "data_shards": 3}'
+WHERE username = 'testuser123';
+
+# Update player position
+UPDATE players SET x = 100, y = 200 WHERE username = 'testuser123';
+
+
+DELETING DATA
+-------------
+# Delete a specific user (also deletes related player data via CASCADE)
+DELETE FROM users WHERE username = 'testuser123';
+
+# Delete a player
+DELETE FROM players WHERE username = 'testuser123';
+
+# Delete all game_players for a specific game
+DELETE FROM game_players WHERE game_id = 'some-uuid';
+
+# Delete an active game (also deletes game_players via CASCADE)
+DELETE FROM active_games WHERE game_id = 'some-uuid';
+
+# Clear entire table (use with caution!)
+TRUNCATE TABLE leaderboard;
+TRUNCATE TABLE resource_transfers;
+
+
+DATABASE MAINTENANCE
+--------------------
+# Vacuum database (clean up and optimize)
+VACUUM ANALYZE;
+
+# Vacuum specific table
+VACUUM ANALYZE users;
+
+# Check table indexes
+SELECT * FROM pg_indexes WHERE tablename = 'users';
+
+# Show database connections
+SELECT * FROM pg_stat_activity WHERE datname = 'codebreak_db';
+
+# Kill a specific connection (if needed)
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity 
+WHERE datname = 'codebreak_db' AND pid <> pg_backend_pid();
+
+
+BACKUP & RESTORE
+----------------
+# Backup entire database
+pg_dump -U codebreak_admin -d codebreak_db > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Backup specific tables
+pg_dump -U codebreak_admin -d codebreak_db -t users -t players > backup_users_players.sql
+
+# Restore database from backup
+psql -U codebreak_admin -d codebreak_db < backup_file.sql
+
+# Backup with password
+PGPASSWORD='%w>Iq3ry!' pg_dump -h localhost -U codebreak_admin -d codebreak_db > backup.sql
+
+
+USER & PERMISSION MANAGEMENT
+----------------------------
+# Create a new database user
+CREATE USER newuser WITH PASSWORD 'password';
+
+# Grant permissions to user
+GRANT ALL PRIVILEGES ON DATABASE codebreak_db TO codebreak_admin;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO codebreak_admin;
+
+# Revoke permissions
+REVOKE ALL PRIVILEGES ON DATABASE codebreak_db FROM someuser;
+
+# Change user password
+ALTER USER codebreak_admin WITH PASSWORD 'new_password';
+
+# Drop user
+DROP USER someuser;
+
+
+RECREATING TABLES (DANGEROUS!)
+------------------------------
+# Drop and recreate a table (will delete all data!)
+DROP TABLE IF EXISTS leaderboard CASCADE;
+
+# Run init_db.sql to recreate all tables
+PGPASSWORD='%w>Iq3ry!' psql -h localhost -U codebreak_admin -d codebreak_db -f backend/init_db.sql
+
+
+USEFUL QUERIES FOR DEBUGGING
+-----------------------------
+# Find duplicate usernames
+SELECT username, COUNT(*) 
+FROM users 
+GROUP BY username 
+HAVING COUNT(*) > 1;
+
+# Check for orphaned players (players without users)
+SELECT p.username 
+FROM players p 
+LEFT JOIN users u ON p.username = u.username 
+WHERE u.username IS NULL;
+
+# View all games with player counts
+SELECT ag.game_id, ag.host_username, ag.created_at, COUNT(gp.username) as player_count
+FROM active_games ag
+LEFT JOIN game_players gp ON ag.game_id = gp.game_id
+GROUP BY ag.game_id, ag.host_username, ag.created_at;
+
+# Find players who never logged in
+SELECT username, created_at 
+FROM players 
+WHERE last_login = created_at;
+
+# View resource transfers for a specific game
+SELECT * FROM resource_transfers 
+WHERE game_id = 'some-uuid' 
+ORDER BY transferred_at DESC;
+
+
+===============================================================================
+SYSTEMD SERVICE MANAGEMENT
+===============================================================================
+
+# Check service status
+sudo systemctl status codebreak
+
+# Start service
+sudo systemctl start codebreak
+
+# Stop service
+sudo systemctl stop codebreak
+
+# Restart service
+sudo systemctl restart codebreak
+
+# Enable service (start on boot)
+sudo systemctl enable codebreak
+
+# Disable service (don't start on boot)
+sudo systemctl disable codebreak
+
+# View service configuration
+sudo systemctl cat codebreak
+
+# Edit service file
+sudo nano /etc/systemd/system/codebreak.service
+
+# Reload systemd after editing service file
+sudo systemctl daemon-reload
+
+
+===============================================================================
+LOG MANAGEMENT
+===============================================================================
+
+# View error logs (last 50 lines)
+sudo tail -n 50 /var/log/codebreak-error.log
+
+# View standard output logs
+sudo tail -n 50 /var/log/codebreak.log
+
+# Follow logs in real-time
+sudo tail -f /var/log/codebreak-error.log
+
+# Search logs for specific error
+sudo grep "Registration error" /var/log/codebreak-error.log
+
+# View logs from specific time
+sudo journalctl -u codebreak --since "2025-10-27 10:00:00"
+
+# Clear old logs (be careful!)
+sudo truncate -s 0 /var/log/codebreak-error.log
+sudo truncate -s 0 /var/log/codebreak.log
+
+
+===============================================================================
+PORT & PROCESS MANAGEMENT
+===============================================================================
+
+# Check if port 8000 is in use
+sudo lsof -i :8000
+
+# Kill process on port 8000
+sudo kill -9 $(sudo lsof -t -i:8000)
+
+# Check all listening ports
+sudo netstat -tulpn | grep LISTEN
+
+# Check process by name
+ps aux | grep uvicorn
+ps aux | grep python
+
+
+===============================================================================
+FILE PERMISSIONS & OWNERSHIP
+===============================================================================
+
+# Make sure ubuntu user owns project files
+sudo chown -R ubuntu:ubuntu /home/ubuntu/codebreak
+
+# Fix permissions on logs
+sudo chmod 644 /var/log/codebreak.log
+sudo chmod 644 /var/log/codebreak-error.log
+
+# Make script executable
+chmod +x /home/ubuntu/codebreak/backend/run.sh
+
+
+===============================================================================
+TESTING ENDPOINTS
+===============================================================================
+
+# Test server is running
+curl http://localhost:8000/
+
+# Test database viewer (from server)
+curl http://localhost:8000/db-viewer
+
+# Test from outside (replace with your IP)
+curl http://3.19.244.138:8000/
+
+# Test registration via curl
+curl -X POST "http://localhost:8000/register/user" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "testuser", "password": "testpass123"}'
+
+
+===============================================================================
+POSTGRESQL SERVICE MANAGEMENT
+===============================================================================
+
+# Check PostgreSQL status
+sudo systemctl status postgresql
+
+# Start PostgreSQL
+sudo systemctl start postgresql
+
+# Restart PostgreSQL
+sudo systemctl restart postgresql
+
+# Stop PostgreSQL
+sudo systemctl stop postgresql
+
+# Enable PostgreSQL on boot
+sudo systemctl enable postgresql
+
+# View PostgreSQL logs
+sudo tail -f /var/log/postgresql/postgresql-14-main.log
+
+
+===============================================================================
+QUICK TROUBLESHOOTING CHECKLIST
+===============================================================================
+
+1. Service not starting?
+   - Check logs: sudo journalctl -u codebreak -n 50
+   - Check permissions: ls -la /home/ubuntu/codebreak
+   - Check port: sudo lsof -i :8000
+
+2. Database connection errors?
+   - Verify PostgreSQL is running: sudo systemctl status postgresql
+   - Test connection: PGPASSWORD='%w>Iq3ry!' psql -h localhost -U codebreak_admin -d codebreak_db
+   - Check password in .env file
+
+3. Registration failing?
+   - Check error logs: sudo tail -f /var/log/codebreak-error.log
+   - Verify tables exist: psql -U codebreak_admin -d codebreak_db -c "\dt"
+   - Check password length (6-72 characters)
+
+4. Code not updating?
+   - Did you git pull? cd /home/ubuntu/codebreak && git pull
+   - Did you restart? sudo systemctl restart codebreak
+   - Check git status: git status
+
+5. Permission denied errors?
+   - Fix ownership: sudo chown -R ubuntu:ubuntu /home/ubuntu/codebreak
+   - Check virtual env: which python (should show venv path)
+
+
+===============================================================================
+IMPORTANT CREDENTIALS & INFORMATION
+===============================================================================
+
+Database Name: codebreak_db
+Database User: codebreak_admin
+Database Password: %w>Iq3ry!
+Database Host: localhost
+Database Port: 5432
+
+Admin Panel Username: admin
+Admin Panel Password: L3igh-@Ann22
+
+Server IP: 3.19.244.138
+Server Port: 8000
+
+GitHub Repo: https://github.com/Leighthann/codebreak
+
+Service Name: codebreak
+Virtual Environment: /home/ubuntu/codebreak/venv/
+Working Directory: /home/ubuntu/codebreak/backend/
+
+
+===============================================================================
+COMMON WORKFLOW: DEPLOY CODE CHANGES
+===============================================================================
+
+1. On your local machine:
+   - Make code changes
+   - git add .
+   - git commit -m "Description of changes"
+   - git push origin master
+
+2. On EC2 server:
+   - ssh -i "codebreak-key.pem" ubuntu@3.19.244.138
+   - cd /home/ubuntu/codebreak
+   - git pull origin master
+   - source venv/bin/activate
+   - pip install -r backend/requirements.txt (if dependencies changed)
+   - sudo systemctl restart codebreak
+   - sudo tail -f /var/log/codebreak-error.log (verify it started)
+
+3. Test the changes:
+   - Visit http://3.19.244.138:8000/register
+   - Test registration and login
+
+
+===============================================================================
+END OF REFERENCE GUIDE
+===============================================================================
+
+===============================================================================
+DEPLOYMENT SCRIPTS - Copy and use these on your servers
+===============================================================================
+
+--- FULL DEPLOYMENT SCRIPT (deploy.sh) ---
+Save as: /home/ubuntu/codebreak/deploy.sh
+Make executable: chmod +x deploy.sh
+Run: ./deploy.sh
+
+#!/bin/bash
+set -e
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+echo -e "${GREEN}CodeBreak Deployment${NC}"
+cd /home/ubuntu/codebreak
+echo -e "${YELLOW}→ Pulling latest code...${NC}"
+git pull origin master
+echo -e "${YELLOW}→ Activating venv...${NC}"
+source venv/bin/activate
+echo -e "${YELLOW}→ Updating dependencies...${NC}"
+pip install -r backend/requirements.txt --upgrade --quiet
+echo -e "${YELLOW}→ Restarting service...${NC}"
+sudo systemctl restart codebreak
+sleep 2
+if sudo systemctl is-active --quiet codebreak; then
+    echo -e "${GREEN}✓ Deployment successful!${NC}"
+    sudo systemctl status codebreak --no-pager --lines=3
+else
+    echo "✗ Service failed!"
+    sudo tail -n 20 /var/log/codebreak-error.log
+    exit 1
+fi
+echo -e "${YELLOW}Recent logs:${NC}"
+sudo tail -n 10 /var/log/codebreak-error.log
+
+
+--- QUICK RESTART SCRIPT (restart.sh) ---
+Save as: /home/ubuntu/codebreak/restart.sh
+Make executable: chmod +x restart.sh
+Run: ./restart.sh
+
+#!/bin/bash
+echo "Restarting CodeBreak..."
+sudo systemctl restart codebreak
+sleep 2
+sudo systemctl is-active --quiet codebreak && echo "✓ Service restarted!" || echo "✗ Failed!"
+sudo tail -f /var/log/codebreak-error.log
+
+
+--- WINDOWS PUSH SCRIPT (push-to-github.bat) ---
+Save as: C:\...\CodeBreak\push-to-github.bat
+Run: Double-click or run from cmd
+
+@echo off
+cd /d "%~dp0"
+echo ================================
+echo Pushing to GitHub
+echo ================================
+git add .
+set /p MSG="Commit message (or press Enter): "
+if "%MSG%"=="" set MSG=Update CodeBreak
+git commit -m "%MSG%"
+git push origin master
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Push failed!
+    pause
+    exit /b 1
+)
+echo.
+echo Success! Now run on EC2: ./deploy.sh
+pause
+
+
+--- ONE-LINE DEPLOYMENT COMMANDS ---
+# Full update from anywhere:
+ssh -i "codebreak-key.pem" ubuntu@3.19.244.138 "cd /home/ubuntu/codebreak && git pull && source venv/bin/activate && pip install -r backend/requirements.txt --quiet && sudo systemctl restart codebreak"
+
+# Quick restart from anywhere:
+ssh -i "codebreak-key.pem" ubuntu@3.19.244.138 "sudo systemctl restart codebreak"
+
+# Deploy and watch logs:
+ssh -i "codebreak-key.pem" ubuntu@3.19.244.138 "cd /home/ubuntu/codebreak && ./deploy.sh && sudo tail -f /var/log/codebreak-error.log"
+
+
+===============================================================================
+COMPLETE WORKFLOW
+===============================================================================
+LOCAL (Windows):
+1. Make code changes
+2. Run: push-to-github.bat
+3. SSH to EC2: ssh -i "codebreak-key.pem" ubuntu@3.19.244.138
+
+EC2 SERVER:
+1. Run: cd /home/ubuntu/codebreak && ./deploy.sh
+2. Test: curl http://3.19.244.138:8000
+3. Monitor: sudo tail -f /var/log/codebreak-error.log
+
+===============================================================================
