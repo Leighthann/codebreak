@@ -403,7 +403,13 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 async def register_user(user: UserCreate):
     """Register a new user with username and password"""
     try:
-        # Validate password length (bcrypt has a 72 byte limit)
+        # Validate password length (bcrypt has a 72 byte limit and minimum 6 characters recommended)
+        if len(user.password) < 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password is too short. Minimum 6 characters required."
+            )
+        
         if len(user.password.encode('utf-8')) > 72:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -624,11 +630,16 @@ async def web_register(request: Request):
             # Registration successful, redirect to login
             return RedirectResponse(url="/login?message=Registration+successful+Please+login", status_code=303)
         except HTTPException as e:
-            return RedirectResponse(url=f"/register?message={e.detail}", status_code=303)
+            # URL encode the error detail
+            import urllib.parse
+            error_message = urllib.parse.quote(str(e.detail))
+            return RedirectResponse(url=f"/register?message={error_message}", status_code=303)
             
     except Exception as e:
         logger.error(f"Web registration error: {str(e)}")
-        return RedirectResponse(url="/register?message=Registration+failed", status_code=303)
+        import urllib.parse
+        error_message = urllib.parse.quote(f"Registration failed: {str(e)}")
+        return RedirectResponse(url=f"/register?message={error_message}", status_code=303)
 
 @app.websocket("/ws/{username}")
 async def websocket_endpoint(websocket: WebSocket, username: str, token: Optional[str] = None, game_id: Optional[str] = None):
