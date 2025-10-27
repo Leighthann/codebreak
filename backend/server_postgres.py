@@ -1025,23 +1025,22 @@ async def get_table_data(table_name: str, current_user = Depends(get_current_use
 # After the other route handlers, add this endpoint for client download
 @app.get("/download-client")
 async def download_client():
-
     """Serve the client zip file for download"""
     try:
-        # Define source and target paths
-        download_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "download-client")
-        temp_zip_path = os.path.join(os.path.dirname(__file__), "codebreak_client.zip")
+        # Define source and target paths - using frontend folder
+        frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+        temp_zip_path = os.path.join(os.path.dirname(__file__), "codebreak_game.zip")
         
-        # Check if the download_client directory exists
-        if not os.path.exists(download_dir):
-            logger.error(f"Client directory not found at: {download_dir}")
+        # Check if the frontend directory exists
+        if not os.path.exists(frontend_dir):
+            logger.error(f"Client directory not found at: {frontend_dir}")
             raise HTTPException(status_code=404, detail="Game client not available")
         
-        # Create a zip file from the download_client directory
+        # Create a zip file from the frontend directory
         shutil.make_archive(
-            os.path.join(os.path.dirname(__file__), "codebreak_client"),
+            os.path.join(os.path.dirname(__file__), "codebreak_game"),
             'zip', 
-            download_dir
+            frontend_dir
         )
         
         # Check if the zip was created
@@ -1052,7 +1051,7 @@ async def download_client():
         # Return the file as a downloadable response
         return FileResponse(
             path=temp_zip_path, 
-            filename="codebreak_client.zip",
+            filename="codebreak_game.zip",
             media_type="application/zip"
         )
     except Exception as e:
