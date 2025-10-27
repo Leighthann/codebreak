@@ -18,7 +18,7 @@ import json
 from uuid import uuid4
 import jwt
 from dotenv import load_dotenv
-from passlib.context import CryptContext
+import bcrypt
 import logging
 import psycopg2
 import psycopg2.extras
@@ -135,27 +135,29 @@ templates = Jinja2Templates(directory="templates")
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Password Hashing - Configure to avoid bcrypt wrap-around bug detection
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__default_rounds=12,
-    bcrypt__default_ident="2b"  # Use 2b variant to avoid wrap-around bug check
-)
-
+# Password Hashing - Using bcrypt directly to avoid passlib compatibility issues
 def get_password_hash(password: str) -> str:
-    # Truncate password to 72 bytes as per bcrypt limitation
+    """Hash a password using bcrypt"""
+    # Convert password to bytes
     password_bytes = password.encode('utf-8')
+    # Bcrypt has a 72 byte limit
     if len(password_bytes) > 72:
-        password = password_bytes[:72].decode('utf-8', errors='ignore')
-    return pwd_context.hash(password)
+        password_bytes = password_bytes[:72]
+    # Generate salt and hash
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    # Return as string
+    return hashed.decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # Truncate password to 72 bytes for verification
+    """Verify a password against a bcrypt hash"""
+    # Convert to bytes
     password_bytes = plain_password.encode('utf-8')
     if len(password_bytes) > 72:
-        plain_password = password_bytes[:72].decode('utf-8', errors='ignore')
-    return pwd_context.verify(plain_password, hashed_password)
+        password_bytes = password_bytes[:72]
+    hashed_bytes = hashed_password.encode('utf-8')
+    # Verify
+    return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 # Token handling
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
