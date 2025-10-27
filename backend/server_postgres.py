@@ -1027,18 +1027,34 @@ async def get_table_data(table_name: str, current_user = Depends(get_current_use
 async def download_client():
     """Serve the client zip file for download"""
     try:
-        # Define source and target paths - using frontend folder
-        frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
-        temp_zip_path = os.path.join(os.path.dirname(__file__), "codebreak_game.zip")
+        # Get the base project directory (parent of backend)
+        backend_dir = os.path.dirname(__file__)
+        project_dir = os.path.dirname(backend_dir)
+        frontend_dir = os.path.join(project_dir, "frontend")
+        temp_zip_path = os.path.join(backend_dir, "codebreak_game.zip")
+        
+        # Log the paths for debugging
+        logger.info(f"Backend dir: {backend_dir}")
+        logger.info(f"Project dir: {project_dir}")
+        logger.info(f"Frontend dir: {frontend_dir}")
+        logger.info(f"Frontend exists: {os.path.exists(frontend_dir)}")
         
         # Check if the frontend directory exists
         if not os.path.exists(frontend_dir):
             logger.error(f"Client directory not found at: {frontend_dir}")
+            # List what's actually in the project directory
+            if os.path.exists(project_dir):
+                contents = os.listdir(project_dir)
+                logger.error(f"Project directory contents: {contents}")
             raise HTTPException(status_code=404, detail="Game client not available")
+        
+        # Remove old zip if it exists
+        if os.path.exists(temp_zip_path):
+            os.remove(temp_zip_path)
         
         # Create a zip file from the frontend directory
         shutil.make_archive(
-            os.path.join(os.path.dirname(__file__), "codebreak_game"),
+            os.path.join(backend_dir, "codebreak_game"),
             'zip', 
             frontend_dir
         )
@@ -1048,14 +1064,20 @@ async def download_client():
             logger.error("Failed to create client zip file")
             raise HTTPException(status_code=500, detail="Failed to prepare download")
         
+        logger.info(f"Successfully created zip at: {temp_zip_path}")
+        
         # Return the file as a downloadable response
         return FileResponse(
             path=temp_zip_path, 
             filename="codebreak_game.zip",
             media_type="application/zip"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error serving client download: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Download error: {str(e)}")
 
 @app.get("/leaderboard")
