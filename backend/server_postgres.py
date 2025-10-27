@@ -403,14 +403,18 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 async def register_user(user: UserCreate):
     """Register a new user with username and password"""
     try:
+        logger.info(f"Registration attempt for username: {user.username}")
+        
         # Validate username
         if not user.username or len(user.username.strip()) < 3:
+            logger.warning(f"Username too short: {user.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username is too short. Minimum 3 characters required."
             )
         
         if len(user.username) > 50:
+            logger.warning(f"Username too long: {user.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username is too long. Maximum 50 characters allowed."
@@ -418,40 +422,48 @@ async def register_user(user: UserCreate):
         
         # Validate password length (bcrypt has a 72 byte limit and minimum 6 characters recommended)
         if len(user.password) < 6:
+            logger.warning(f"Password too short for user: {user.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password is too short. Minimum 6 characters required."
             )
         
         if len(user.password.encode('utf-8')) > 72:
+            logger.warning(f"Password too long for user: {user.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password is too long. Maximum 72 characters allowed."
             )
         
+        logger.info(f"Attempting database connection for user: {user.username}")
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         
         # Check if username exists
+        logger.info(f"Checking if username exists: {user.username}")
         cursor.execute("SELECT username FROM users WHERE username = %s", (user.username,))
         if cursor.fetchone():
             cursor.close()
             conn.close()
+            logger.warning(f"Username already exists: {user.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username already registered"
             )
         
         # Hash the password
+        logger.info(f"Hashing password for user: {user.username}")
         hashed_password = get_password_hash(user.password)
         
         # Insert new user
+        logger.info(f"Inserting user into database: {user.username}")
         cursor.execute(
             "INSERT INTO users (username, hashed_password, created_at) VALUES (%s, %s, %s)",
             (user.username, hashed_password, datetime.now())
         )
         
         # Initialize player data
+        logger.info(f"Creating player record for user: {user.username}")
         cursor.execute("""
             INSERT INTO players (username, health, x, y, score, inventory, created_at, last_login)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -465,11 +477,14 @@ async def register_user(user: UserCreate):
         cursor.close()
         conn.close()
         
+        logger.info(f"User registered successfully: {user.username}")
         return {"status": "success", "message": "User registered successfully"}
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
         logger.error(f"Registration error: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Registration failed")
 
 @app.get("/players/{username}")
@@ -649,7 +664,10 @@ async def web_register(request: Request):
             return RedirectResponse(url=f"/register?message={error_message}", status_code=303)
             
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
         logger.error(f"Web registration error: {str(e)}")
+        logger.error(f"Full traceback: {error_trace}")
         import urllib.parse
         error_message = urllib.parse.quote(f"Registration failed: {str(e)}")
         return RedirectResponse(url=f"/register?message={error_message}", status_code=303)
