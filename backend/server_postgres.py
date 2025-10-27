@@ -403,6 +403,19 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 async def register_user(user: UserCreate):
     """Register a new user with username and password"""
     try:
+        # Validate username
+        if not user.username or len(user.username.strip()) < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username is too short. Minimum 3 characters required."
+            )
+        
+        if len(user.username) > 50:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username is too long. Maximum 50 characters allowed."
+            )
+        
         # Validate password length (bcrypt has a 72 byte limit and minimum 6 characters recommended)
         if len(user.password) < 6:
             raise HTTPException(

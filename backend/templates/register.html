@@ -23,8 +23,9 @@
             <form action="/web-register" method="POST" class="space-y-6">
                 <div>
                     <label for="username" class="block text-sm font-medium text-gray-400">Username</label>
-                    <input type="text" name="username" id="username" required
+                    <input type="text" name="username" id="username" required minlength="3" maxlength="50"
                         class="mt-1 block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <p class="mt-1 text-xs text-gray-500">3-50 characters</p>
                 </div>
 
                 <div>
