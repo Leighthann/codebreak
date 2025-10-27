@@ -135,13 +135,26 @@ templates = Jinja2Templates(directory="templates")
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Password Hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password Hashing - Configure to avoid bcrypt wrap-around bug detection
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__default_rounds=12,
+    bcrypt__default_ident="2b"  # Use 2b variant to avoid wrap-around bug check
+)
 
 def get_password_hash(password: str) -> str:
+    # Truncate password to 72 bytes as per bcrypt limitation
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > 72:
+        password = password_bytes[:72].decode('utf-8', errors='ignore')
     return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # Truncate password to 72 bytes for verification
+    password_bytes = plain_password.encode('utf-8')
+    if len(password_bytes) > 72:
+        plain_password = password_bytes[:72].decode('utf-8', errors='ignore')
     return pwd_context.verify(plain_password, hashed_password)
 
 # Token handling
