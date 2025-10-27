@@ -32,12 +32,12 @@ logger = logging.getLogger(__name__)
 load_dotenv(override=True)  # Added override=True to ensure variables are loaded
 
 # Database connection parameters - using direct password from env for debugging
-password = os.getenv("DB_PASSWORD", "L3igh-@Ann22")  # Default password for debugging
+password = os.getenv("DB_PASSWORD", "%w>Iq3ry!")  # Default password for codebreak_user
 print(f"Password loaded from env: {'*' * len(password) if password else 'NO PASSWORD FOUND'}")
 
 DB_PARAMS = {
     "database": os.getenv("DB_NAME", "codebreak_db"),
-    "user": os.getenv("DB_USER", "postgres"),
+    "user": os.getenv("DB_USER", "codebreak_admin"),
     "password": password,  # Direct assignment from variable
     "host": os.getenv("DB_HOST", "localhost"),
     "port": int(os.getenv("DB_PORT", "5432"))
@@ -82,7 +82,7 @@ def get_db_connection():
             
             # If that fails, try with hardcoded password as last resort
             hardcoded_params = DB_PARAMS.copy()
-            hardcoded_params["password"] = "L3igh-@Ann22"  # Temporary for debugging
+            hardcoded_params["password"] = "%w>Iq3ry!"  # Temporary for debugging
             print("Trying with hardcoded password as fallback...")
             connection = psycopg2.connect(**hardcoded_params)
             print("Connection successful with hardcoded password!")
