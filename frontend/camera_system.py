@@ -84,6 +84,19 @@ class CameraSystem:
         screen_y = y - self.target_y + self.offset_y
         return (screen_x, screen_y)
     
+    def apply(self, x: float, y: float) -> tuple:
+        """
+        Alias for apply_to_position - applies camera offset to world position.
+        
+        Args:
+            x: World x position
+            y: World y position
+            
+        Returns:
+            Screen position tuple (x, y)
+        """
+        return self.apply_to_position(x, y)
+    
     def world_to_screen(self, world_x: float, world_y: float) -> tuple:
         """Convert world coordinates to screen coordinates."""
         return self.apply_to_position(world_x, world_y)

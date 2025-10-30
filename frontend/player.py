@@ -27,14 +27,11 @@ class Player:
         self.score = 0
         
         # State
-        self.attacking = False
         self.is_dashing = False
         self.is_invincible = False
         self.is_moving = False
         
         # Timers
-        self.attack_start_time = 0
-        self.attack_duration = 300
         self.invincibility_timer = 0
         self.invincibility_duration = 1000
         self.last_projectile_time = 0
@@ -81,12 +78,6 @@ class Player:
         
         # Crafting recipes
         self.crafting_recipes = {
-            "energy_sword": {
-                "code_fragments": 5,
-                "energy_cores": 3,
-                "data_shards": 1,
-                "stats": {"damage": 20, "speed": 1.5}
-            },
             "data_shield": {
                 "code_fragments": 3,
                 "energy_cores": 2,
@@ -122,6 +113,9 @@ class Player:
         # Active effects
         self.active_effects = {}
         
+        # Active item effects (for progress bars)
+        self.active_item_effects = []  # List of {"name": str, "duration": int, "max_duration": int, "color": tuple}
+        
         # Callbacks for game integration
         self.sound_callback = None
         self.effect_callback = None
@@ -156,6 +150,9 @@ class Player:
         """Main update method - handles all player state updates."""
         # Update energy regeneration
         self.update_energy(dt)
+        
+        # Update active item effects (decrement duration)
+        self.update_active_item_effects()
         
         # Handle movement
         moving = await self.move(keys, world_generator)
@@ -203,11 +200,6 @@ class Player:
                                text="Hack activated!",
                                color=(0, 255, 0), size=20, duration=1.0)
                 self.trigger_screen_shake(5, 0.5)
-            elif tool_name == "energy_sword":
-                self.add_effect("text", self.x, self.y - 30,
-                               text="Energy blade activated!",
-                               color=(0, 195, 255), size=20, duration=1.0)
-                self.add_effect("explosion", self.x, self.y)
             else:
                 self.add_effect("text", self.x, self.y - 30,
                                text="Tool activated!",
@@ -234,6 +226,9 @@ class Player:
         # Draw shield indicator if active
         if self.shield > 0:
             self.draw_shield_indicator(surface, screen_x, screen_y)
+        
+        # Draw active item effect progress bars
+        self.draw_item_effect_bars(surface, screen_x, screen_y)
         
         # Flash effect when invincible
         if self.is_invincible:
@@ -283,6 +278,46 @@ class Player:
         pygame.draw.circle(shield_surf, (0, 191, 255, alpha), 
                           (radius + 5, radius + 5), radius, 3)
         surface.blit(shield_surf, (center_x - radius - 5, center_y - radius - 5))
+    
+    def draw_item_effect_bars(self, surface, screen_x, screen_y):
+        """Draw progress bars for active item effects."""
+        if not self.active_item_effects:
+            return
+        
+        bar_width = 60
+        bar_height = 6
+        bar_spacing = 10
+        start_y = screen_y - 20  # Start above health bar
+        
+        for i, effect in enumerate(self.active_item_effects):
+            # Calculate position (stack bars vertically)
+            bar_x = screen_x + (self.width - bar_width) // 2
+            bar_y = start_y - (i * bar_spacing)
+            
+            # Calculate progress percentage
+            progress = effect["duration"] / effect["max_duration"]
+            
+            # Background (dark gray)
+            pygame.draw.rect(surface, (40, 40, 40), 
+                           (bar_x, bar_y, bar_width, bar_height))
+            
+            # Foreground (effect color) based on progress
+            progress_width = int(bar_width * progress)
+            pygame.draw.rect(surface, effect["color"], 
+                           (bar_x, bar_y, progress_width, bar_height))
+            
+            # Border
+            pygame.draw.rect(surface, (255, 255, 255), 
+                           (bar_x, bar_y, bar_width, bar_height), 1)
+            
+            # Draw effect name label (small font)
+            try:
+                font = pygame.font.Font(None, 14)
+                label = font.render(effect["name"], True, effect["color"])
+                label_rect = label.get_rect(centerx=bar_x + bar_width // 2, bottom=bar_y - 2)
+                surface.blit(label, label_rect)
+            except:
+                pass  # Ignore font errors
     
     def draw_projectiles(self, surface, camera_system):
         """Draw all player projectiles."""
@@ -817,13 +852,6 @@ class Player:
         if self.is_invincible and current_time - self.invincibility_timer >= self.invincibility_duration:
             self.is_invincible = False
         
-        if keys[pygame.K_SPACE]:
-            self.attacking = True
-            action_taken = True
-            self.attack_start_time = current_time
-            self.effects.play_attack_sound()
-            self.damage = self.use_equipped_item()
-        
         if keys[pygame.K_f] and current_time - self.last_projectile_time >= self.projectile_cooldown:
             await self.fire_projectile()
             self.last_projectile_time = current_time
@@ -833,18 +861,7 @@ class Player:
             await self.use_tool()
             action_taken = True
         
-        if self.attacking:
-            self.frame_index = (current_time // 100) % 3
-            if self.direction in ["right", "left"]:
-                self.sprite = self.attack[self.frame_index]
-            else:
-                self.sprite = self.idle
-            
-            if current_time - self.attack_start_time > self.attack_duration:
-                self.attacking = False
-                self.damage = 10
-                
-        elif moving:
+        if moving:
              # Walking animation
             self.frame_index = (current_time // 150) % 4
             
@@ -867,8 +884,7 @@ class Player:
             else:  # down or default
                 self.sprite = self.walk_down[0]
         
-        # Update projectiles
-        await self.update_projectiles(enemies)
+        # Don't update projectiles here - it's handled in update() method
 
         # Send state update if any action was taken
         if action_taken:
@@ -954,42 +970,46 @@ class Player:
     async def decrease_health(self, amount):
         """Decrease player health if not invincible."""
         if not self.is_invincible:
+            original_amount = amount
+            
             # Apply shield if available
             if self.shield > 0:
                 # Absorb damage with shield
                 absorbed = min(self.shield, amount)
                 self.shield -= absorbed
                 amount -= absorbed
+                print(f"DEBUG: Shield absorbed {absorbed} damage, {amount} remaining, shield now at {self.shield}")
             
             # Apply remaining damage to health
             if amount > 0:
                 self.health = max(0, self.health - amount)
-                
-                # Become invincible briefly
-                self.is_invincible = True
-                self.invincibility_timer = pygame.time.get_ticks()
+                print(f"DEBUG: Health reduced by {amount}, health now at {self.health}")
+            
+            # Become invincible briefly after ANY damage (shield or health)
+            # This prevents rapid consecutive hits
+            self.is_invincible = True
+            self.invincibility_timer = pygame.time.get_ticks()
 
-                # Check if player died
-                if self.health <= 0 and self.game_ref:
-                    self.game_ref.handle_player_defeat()
-                
-                # Notify server of damage taken
-                if self.connected and self.ws:
-                    try:
-                        damage_data = {
-                            "action": "damage_taken",
-                            "amount": amount,
-                            "health": self.health
-                        }
-                        await self.ws.send(json.dumps(damage_data))
-                    except Exception as e:
-                        print(f"Failed to send damage data: {e}")
-                        self.connected = False
-                
-                # Send general update
-                await self.send_update()
-                
-                return True  # Damage was dealt
+            # Game over is now handled in game.py when health <= 0
+            
+            # Notify server of damage taken
+            if self.connected and self.ws:
+                try:
+                    damage_data = {
+                        "action": "damage_taken",
+                        "amount": original_amount,
+                        "health": self.health,
+                        "shield": self.shield
+                    }
+                    await self.ws.send(json.dumps(damage_data))
+                except Exception as e:
+                    print(f"Failed to send damage data: {e}")
+                    self.connected = False
+            
+            # Send general update
+            await self.send_update()
+            
+            return True  # Damage was dealt
                 
         return False  # No damage was dealt
 
@@ -1068,23 +1088,7 @@ class Player:
             
             await self.send_update()
                 
-    def use_equipped_item(self):
-        """Use the currently equipped item."""
-        if self.equipped_weapon:
-            # Apply weapon effects (e.g., increased damage)
-            base_damage = 10
-            weapon_damage = self.equipped_weapon["stats"].get("damage", 0)
-            total_damage = base_damage + weapon_damage
-            
-            # Decrease durability
-            self.equipped_weapon["durability"] -= 1
-            if self.equipped_weapon["durability"] <= 0:
-                self.crafted_items.remove(self.equipped_weapon)
-                self.equipped_weapon = None
-                
-            return total_damage
-            
-        return 10  # Base damage if no weapon equipped
+
 
     async def use_tool(self):
         """Use the currently equipped tool."""
@@ -1096,7 +1100,6 @@ class Player:
         
         # Define energy costs for tools
         tool_costs = {
-            "energy_sword": 20,
             "data_shield": 25,
             "hack_tool": 15
         }
@@ -1118,10 +1121,22 @@ class Player:
         if self.equipped_tool["name"] == "data_shield":
             # Apply shield effect
             shield_amount = self.equipped_tool["stats"]["defense"]
-            duration = self.equipped_tool["stats"]["duration"]
+            old_shield = self.shield
             self.shield = min(100, self.shield + shield_amount)
+            actual_shield_gained = self.shield - old_shield
             print(f"DEBUG: Applied data_shield, shield now at {self.shield}")
             
+            # Add shield indicator - shows shield amount, not a timer
+            # Progress bar will deplete as shield takes damage
+            if actual_shield_gained > 0:
+                self.active_item_effects.append({
+                    "name": "Data Shield",
+                    "duration": self.shield,  # Current shield amount
+                    "max_duration": 100,  # Max possible shield
+                    "color": (0, 255, 255),  # Cyan
+                    "type": "shield"  # Special type to track shield
+                })
+            
             # Decrease durability
             self.equipped_tool["durability"] -= 1
             print(f"DEBUG: Tool durability now: {self.equipped_tool['durability']}")
@@ -1129,33 +1144,16 @@ class Player:
                 self.crafted_items.remove(self.equipped_tool)
                 self.equipped_tool = None
                 print("DEBUG: Tool broke and was removed")
+                
         elif self.equipped_tool["name"] == "hack_tool":
-            # Apply hack effect (e.g., temporarily disable nearby enemies)
-            hack_range = self.equipped_tool["stats"]["range"]
-            cooldown = self.equipped_tool["stats"]["cooldown"]
-            
-            # Temporary effect - increases energy
+            # Apply hack effect - restores energy instantly
+            old_energy = self.energy
             self.energy = min(self.max_energy, self.energy + 20)
-            print(f"DEBUG: Used hack_tool with range {hack_range}, energy now at {self.energy}")
+            actual_energy_gained = self.energy - old_energy
+            print(f"DEBUG: Used hack_tool, energy restored to {self.energy} (+{actual_energy_gained})")
             
-            # Decrease durability
-            self.equipped_tool["durability"] -= 1
-            print(f"DEBUG: Tool durability now: {self.equipped_tool['durability']}")
-            if self.equipped_tool["durability"] <= 0:
-                self.crafted_items.remove(self.equipped_tool)
-                self.equipped_tool = None
-                print("DEBUG: Tool broke and was removed")
-        elif self.equipped_tool["name"] == "energy_sword":
-            # Apply damage boost effect
-            damage_boost = self.equipped_tool["stats"]["damage"]
-            speed_boost = self.equipped_tool["stats"]["speed"]
-            
-            # Temporary effect - provides temporary invincibility
-            self.is_invincible = True
-            self.invincibility_timer = pygame.time.get_ticks()
-            self.invincibility_duration = 2000  # 2 seconds of invincibility
-            
-            print(f"DEBUG: Used energy_sword with damage {damage_boost}, invincibility activated")
+            # Hack Tool provides instant energy restore - no duration effect
+            # No progress bar needed for instant effects
             
             # Decrease durability
             self.equipped_tool["durability"] -= 1
@@ -1183,6 +1181,21 @@ class Player:
         await self.send_update()
         
         return True  # Indicate tool was used
+    
+    def update_active_item_effects(self):
+        """Update active item effect durations and remove expired ones."""
+        for effect in self.active_item_effects[:]:
+            # Handle shield type specially - update duration based on current shield
+            if effect.get("type") == "shield":
+                effect["duration"] = self.shield
+                # Remove shield indicator when shield is depleted
+                if self.shield <= 0:
+                    self.active_item_effects.remove(effect)
+            else:
+                # Handle time-based effects
+                effect["duration"] -= 1
+                if effect["duration"] <= 0:
+                    self.active_item_effects.remove(effect)
 
     def update_energy(self, dt):
         """Update player energy regeneration."""
@@ -1192,8 +1205,6 @@ class Player:
         # Modify regeneration based on conditions
         if hasattr(self, 'is_moving') and self.is_moving:
             regen_rate = base_regen_rate * 0.5  # Reduced regeneration while moving
-        elif self.attacking:
-            regen_rate = base_regen_rate * 0.25  # Greatly reduced while attacking
         else:
             regen_rate = base_regen_rate  # Full regeneration while idle
         

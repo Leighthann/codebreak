@@ -13,11 +13,10 @@ from datetime import datetime
 
 # Import existing game modules
 from effects import GameEffects
-# Uncomment these as they exist in your project:
-# from enemy import Enemy
-# from world import WorldGenerator
-# from worldObject import WorldObjects
-# from player import Player
+from enemy import Enemy
+from world import WorldGenerator
+from worldObject import WorldObject, Resource
+from player import Player
 
 # Import new modular systems
 from crafting import CraftingSystem
@@ -81,7 +80,9 @@ class Game:
         self.font_manager = FontManager()
         self.settings_manager = SettingsManager()
         self.auth_manager = AuthManager()
-        self.state_manager = StateManager(initial_state="menu", transition_duration=15)
+    # Use a 5-second fade (duration measured in frames). FPS is defined above.
+        self.state_manager = StateManager(initial_state="menu", transition_duration=int(5 * self.FPS))
+        self.state_manager.set_game_instance(self)  # Set game reference for state handlers
         self.camera_system = CameraSystem()
         self.ui_manager = UIManager(WIDTH, HEIGHT)
         self.crafting_system = CraftingSystem(
@@ -144,6 +145,12 @@ class Game:
         self.bg_particles = []
         self.grid_offset_y = 0
         
+        # Screen shake effect
+        self.screen_shake_amount = 0
+        self.screen_shake_duration = 0
+        self.camera_offset_x = 0
+        self.camera_offset_y = 0
+        
         # Multiplayer
         self.other_players = {}
         self.teammates = []
@@ -155,6 +162,9 @@ class Game:
         self.connection_attempts = 0
         self.session_id = None
         self.score_submitted = False
+
+        # Pending actions (used for fade transitions)
+        self.pending_restart = False
         
         # Game state
         self.state = {
@@ -177,7 +187,7 @@ class Game:
         """Create all UI elements using the UI manager."""
         # Menu buttons
         self.ui_manager.create_menu_buttons({
-            'start': lambda: self.state_manager.transition_to("gameplay"),
+            'start': lambda: self.start_game_with_fade(),
             'leaderboard': lambda: self.state_manager.transition_to("leaderboard"),
             'settings': lambda: self.state_manager.transition_to("settings"),
             'quit': pygame.quit
@@ -192,18 +202,24 @@ class Game:
         })
         
         # Game over buttons
+        # Make restart synchronous enough to give immediate visual feedback
+        # by doing an immediate transition (fade=False) and schedule the async
+        # reset work. This avoids the user having to click twice.
         self.ui_manager.create_game_over_buttons({
-            'restart': lambda: asyncio.create_task(self.restart_game()),
-            'leaderboard': lambda: self.state_manager.transition_to("leaderboard"),
-            'menu': lambda: self.state_manager.transition_to("menu")
+            'restart': lambda: self.request_restart_with_fade(),
+            # Make leaderboard and menu transitions immediate from game over
+            'leaderboard': lambda: self.state_manager.transition_to("leaderboard", fade=False),
+            'menu': lambda: self.state_manager.transition_to("menu", fade=False)
         })
         
         # Leaderboard back button
+        # Use fade=False for the Back button so returning from leaderboard is immediate
         self.ui_manager.create_leaderboard_button(
             lambda: self.state_manager.transition_to(
-                self.state_manager.get_previous_state() 
-                if self.state_manager.get_previous_state() in ["menu", "game_over"] 
-                else "menu"
+                self.state_manager.get_previous_state()
+                if self.state_manager.get_previous_state() in ["menu", "game_over"]
+                else "menu",
+                fade=False
             )
         )
         
@@ -259,9 +275,12 @@ class Game:
     
     async def handle_gameplay_state(self, events=None, dt=1/60):
         """Handle gameplay state."""
-        # Initialize game world if needed
+        # Initialize game world if needed (only if player doesn't exist AND we haven't just initialized)
         if not self.player:
-            await self.initialize_game_world()
+            # Check if we're in the middle of a fade - if so, skip async init
+            # because sync init was already called before the fade started
+            if not self.state_manager.is_transitioning():
+                await self.initialize_game_world()
             return
         
         keys = pygame.key.get_pressed()
@@ -277,18 +296,11 @@ class Game:
                 return
             elif hasattr(self, 'chat_system') and self.chat_system.handle_event(event, self.player):
                 continue
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                self.handle_resource_sharing_ui()
             elif event.type == pygame.KEYDOWN:
-                # Quick share shortcuts (only when crafting menu closed)
-                if not self.crafting_system.is_menu_open() and event.key in [pygame.K_1, pygame.K_2, pygame.K_3]:
-                    resource_types = ["code_fragments", "energy_cores", "data_shards"]
-                    resource_index = event.key - pygame.K_1
-                    if resource_index < len(resource_types):
-                        self.handle_resource_sharing_ui(resource_types[resource_index])
+                # Resource sharing removed
                 
                 # Crafting menu toggle
-                elif event.key == pygame.K_c:
+                if event.key == pygame.K_c:
                     self.crafting_system.toggle_menu()
                     self.play_sound("menu_select")
                 
@@ -315,6 +327,21 @@ class Game:
                 await self.player.update(dt, keys, self.enemies, self.world_generator)
             except Exception as e:
                 print(f"Error in player update: {e}")
+            
+            # Check for resource collection
+            if self.player and self.resources:
+                collected = self.player.check_resource_collision(self.resources)
+                for resource in collected:
+                    self.resources.remove(resource)
+            
+            # Check if player is dead
+            if self.player and self.player.health <= 0:
+                print("Player defeated! Transitioning to game over...")
+                self.final_score = self.score
+                self.final_survival_time = (pygame.time.get_ticks() - self.game_start_time) // 1000
+                # Switch immediately to game over (no fade) so the screen appears right away.
+                self.state_manager.transition_to("game_over", fade=False)
+                return
             
             # Update game world
             await self.update_game_world(dt)
@@ -354,29 +381,38 @@ class Game:
             )
             self.screen.blit(tool_text, (10, self.current_height - 30))
         
-        # Show score
+        # Show score (top right)
         score_text = self.font_manager.get_md_font().render(
             f"Score: {self.score}",
             True, WHITE
         )
-        self.screen.blit(score_text, (10, 10))
+        self.screen.blit(score_text, (self.current_width - score_text.get_width() - 20, 20))
         
-        # Show wave
+        # Show survival timer (top right, below score)
+        minutes = int(self.survival_time // 60)
+        seconds = int(self.survival_time % 60)
+        time_text = self.font_manager.get_md_font().render(
+            f"Time: {minutes:02d}:{seconds:02d}", 
+            True, WHITE
+        )
+        self.screen.blit(time_text, (self.current_width - time_text.get_width() - 20, 50))
+        
+        # Show wave (top left)
         wave_text = self.font_manager.get_md_font().render(
             f"Wave: {self.wave_number}",
             True, WHITE
         )
-        self.screen.blit(wave_text, (10, 40))
+        self.screen.blit(wave_text, (10, 10))
         
-        # Show health
+        # Show health (top left, below wave)
         health_text = self.font_manager.get_md_font().render(
             f"Health: {self.player.health}/{self.player.max_health}",
             True, GREEN if self.player.health > 50 else RED
         )
-        self.screen.blit(health_text, (10, 70))
+        self.screen.blit(health_text, (10, 40))
         
-        # Show resources
-        y_offset = 100
+        # Show resources (top left, below health)
+        y_offset = 70
         for resource, amount in self.player.resources.items():
             resource_name = resource.replace("_", " ").title()
             resource_text = self.font_manager.get_sm_font().render(
@@ -388,24 +424,160 @@ class Game:
     
     # ==================== GAME WORLD METHODS ====================
     
+    def load_resource_sprites(self):
+        """Load resource sprite images from disk."""
+        if self.resource_sprites:
+            # Already loaded
+            return
+        
+        resource_types = ["code_fragments", "energy_cores", "data_shards"]
+        
+        for resource_type in resource_types:
+            try:
+                sprite_path = os.path.join(
+                    os.path.dirname(__file__), 
+                    "spritesheets", 
+                    "resources", 
+                    f"{resource_type}.png"
+                )
+                sprite = pygame.image.load(sprite_path).convert_alpha()
+                self.resource_sprites[resource_type] = sprite
+                print(f"Loaded resource sprite: {resource_type}")
+            except Exception as e:
+                print(f"Could not load resource sprite {resource_type}: {e}")
+                # Create a fallback colored surface
+                fallback_colors = {
+                    "code_fragments": (0, 255, 255),    # Cyan
+                    "energy_cores": (255, 215, 0),      # Gold
+                    "data_shards": (255, 41, 117)       # Pink
+                }
+                fallback = pygame.Surface((24, 24), pygame.SRCALPHA)
+                fallback.fill(fallback_colors.get(resource_type, (255, 255, 255)))
+                self.resource_sprites[resource_type] = fallback
+    
     async def initialize_game_world(self):
         """Initialize the game world."""
         print("Initializing game world...")
-        # Initialize player, enemies, world generator, etc.
-        # This should contain your existing initialization code
         
-        # Set up player callbacks for effects and sounds
-        if self.player:
+        # Load resource sprites
+        self.load_resource_sprites()
+        
+        # Create world generator
+        if not self.world_generator:
+            self.world_generator = WorldGenerator(WIDTH, HEIGHT, TILE_SIZE)
+        
+        # Create player
+        if not self.player:
+            spawn_x = WIDTH // 2
+            spawn_y = HEIGHT // 2
+            
+            # Load player sprite sheet if needed
+            if not self.player_sprite_sheet:
+                try:
+                    import os
+                    sprite_path = os.path.join(os.path.dirname(__file__), "spritesheets", "player-spritesheet.png")
+                    self.player_sprite_sheet = pygame.image.load(sprite_path).convert_alpha()
+                    print(f"Loaded player sprite sheet from {sprite_path}")
+                except Exception as e:
+                    print(f"Could not load player sprite: {e}")
+                    # Create a simple colored surface as fallback
+                    self.player_sprite_sheet = pygame.Surface((32, 32))
+                    self.player_sprite_sheet.fill(NEON_BLUE)
+            
+            self.player = Player(self.player_sprite_sheet, spawn_x, spawn_y)
+            
+            # Set up player callbacks for effects and sounds
             self.player.set_callbacks(
                 sound_callback=self.play_sound,
                 effect_callback=self.add_effect,
                 screen_shake_callback=self.start_screen_shake
             )
         
-        pass
+        # Initialize game state
+        self.enemies = []
+        self.resources = []
+        self.power_ups = []
+        self.effects_list = []
+        self.score = 0
+        self.survival_time = 0
+        self.game_start_time = pygame.time.get_ticks()
+        
+        # Start first wave
+        self.wave_number = 1
+        self.spawn_wave()
+        
+        # Spawn initial resources across the map
+        self.spawn_initial_resources()
+        
+        print("Game world initialized successfully!")
+
+    def initialize_game_world_sync(self):
+        """Synchronous version of game world initialization used for immediate restarts.
+
+        This mirrors the logic in the async initializer but runs synchronously so
+        the UI shows the gameplay screen immediately after the Play Again click.
+        """
+        try:
+            print("Initializing game world (sync)...")
+            
+            # Load resource sprites
+            self.load_resource_sprites()
+
+            # Create world generator
+            if not self.world_generator:
+                self.world_generator = WorldGenerator(WIDTH, HEIGHT, TILE_SIZE)
+
+            # Create player
+            if not self.player:
+                spawn_x = WIDTH // 2
+                spawn_y = HEIGHT // 2
+
+                # Load player sprite sheet if needed
+                if not self.player_sprite_sheet:
+                    try:
+                        import os
+                        sprite_path = os.path.join(os.path.dirname(__file__), "spritesheets", "player-spritesheet.png")
+                        self.player_sprite_sheet = pygame.image.load(sprite_path).convert_alpha()
+                        print(f"Loaded player sprite sheet from {sprite_path}")
+                    except Exception as e:
+                        print(f"Could not load player sprite: {e}")
+                        self.player_sprite_sheet = pygame.Surface((32, 32))
+                        self.player_sprite_sheet.fill(NEON_BLUE)
+
+                self.player = Player(self.player_sprite_sheet, spawn_x, spawn_y)
+
+                # Set up player callbacks for effects and sounds
+                self.player.set_callbacks(
+                    sound_callback=self.play_sound,
+                    effect_callback=self.add_effect,
+                    screen_shake_callback=self.start_screen_shake
+                )
+
+            # Initialize game state
+            self.enemies = []
+            self.resources = []
+            self.power_ups = []
+            self.effects_list = []
+            self.score = 0
+            self.survival_time = 0
+            self.game_start_time = pygame.time.get_ticks()
+
+            # Start first wave
+            self.wave_number = 1
+            self.spawn_wave()
+            
+            # Spawn initial resources across the map
+            self.spawn_initial_resources()
+
+            print("Game world initialized successfully! (sync)")
+        except Exception as e:
+            print("Error during synchronous game world initialization:", e)
     
     async def update_game_world(self, dt):
         """Update game world state."""
+        # Update screen shake
+        self.update_camera_shake(dt)
+        
         # Update enemies (they handle their own animation and AI)
         for enemy in self.enemies[:]:
             await enemy.update(self.player)
@@ -413,8 +585,12 @@ class Game:
             
             # Check if enemy is dead
             if enemy.health <= 0:
+                # Spawn resources from defeated enemy
+                self.spawn_resource_from_enemy(enemy.x, enemy.y)
+                
                 self.enemies.remove(enemy)
-                self.score += 10
+                # Score calculation: 100 points × wave_number per defeated enemy
+                self.score += 100 * self.wave_number
                 self.add_effect("explosion", enemy.x, enemy.y)
         
         # Update resources
@@ -443,24 +619,200 @@ class Game:
                 self.start_next_wave()
     
     def start_next_wave(self):
-        """Start the next wave of enemies."""
+        """Start a new enemy wave with visual and audio effects."""
         self.wave_number += 1
-        self.enemies_to_spawn = 5 + (self.wave_number * 2)
         self.next_wave_timer = 0
         print(f"Starting wave {self.wave_number}")
+        
+        # Calculate enemies based on wave and difficulty
+        base_enemies = 2 + self.wave_number
+        difficulty_mult = {"Easy": 0.7, "Normal": 1.0, "Hard": 2.0}
+        difficulty_factor = difficulty_mult.get(
+            self.settings_manager.get_setting("difficulty"), 
+            1.0
+        )
+        
+        self.enemies_to_spawn = max(3, int(base_enemies * difficulty_factor))
+        
+        # Show wave notification - BIG TEXT ON SCREEN
+        self.add_effect(
+            "text", 
+            WIDTH // 2, 
+            HEIGHT // 2, 
+            text=f"WAVE {self.wave_number}", 
+            color=NEON_BLUE, 
+            size=60, 
+            duration=120  # 2 seconds at 60 FPS
+        )
+        
+        # Play sound
+        if hasattr(self.effects, 'play_sound'):
+            self.effects.play_sound("level_up")
+        
+        # Start screen shake
+        self.start_screen_shake(20, 0.5)
+        
+        # Spawn the wave
+        self.spawn_wave()
+    
+    def start_screen_shake(self, amount, duration):
+        """Start screen shake effect."""
+        self.screen_shake_amount = amount      # How intense (pixels offset)
+        self.screen_shake_duration = duration  # How long (seconds)
+    
+    def update_camera_shake(self, dt):
+        """Update screen shake effect."""
+        if self.screen_shake_duration > 0:
+            # Decrease duration
+            self.screen_shake_duration -= dt
+            
+            # Calculate offset
+            if self.settings_manager.get_setting("screen_shake"):
+                intensity = min(self.screen_shake_amount, 10)  # Cap at 10 pixels
+                self.camera_offset_x = random.randint(-intensity, intensity)
+                self.camera_offset_y = random.randint(-intensity, intensity)
+            else:
+                self.camera_offset_x = 0
+                self.camera_offset_y = 0
+                
+            # Reset when done
+            if self.screen_shake_duration <= 0:
+                self.screen_shake_duration = 0
+                self.camera_offset_x = 0
+                self.camera_offset_y = 0
+    
+    def spawn_wave(self):
+        """Spawn enemies for the current wave."""
+        # Load enemy sprite sheet if needed
+        if not self.enemy_sprite_sheet:
+            try:
+                import os
+                sprite_path = os.path.join(os.path.dirname(__file__), "spritesheets", "enemy-spritesheet.png")
+                self.enemy_sprite_sheet = pygame.image.load(sprite_path).convert_alpha()
+                print(f"Loaded enemy sprite sheet from {sprite_path}")
+            except Exception as e:
+                print(f"Could not load enemy sprite: {e}")
+                # Create a simple colored surface as fallback
+                self.enemy_sprite_sheet = pygame.Surface((32, 32))
+                self.enemy_sprite_sheet.fill(NEON_RED)
+        
+        # Calculate number of enemies based on wave
+        num_enemies = 3 + (self.wave_number * 2)
+        
+        # Get server URL from auth manager
+        server_url = self.auth_manager.get_server_url()
+        
+        # Spawn enemies at random positions around the map edges
+        for i in range(num_enemies):
+            # Random spawn position (edge of map)
+            side = random.randint(0, 3)  # 0=top, 1=right, 2=bottom, 3=left
+            
+            if side == 0:  # Top
+                x = random.randint(0, WIDTH)
+                y = 0
+            elif side == 1:  # Right
+                x = WIDTH
+                y = random.randint(0, HEIGHT)
+            elif side == 2:  # Bottom
+                x = random.randint(0, WIDTH)
+                y = HEIGHT
+            else:  # Left
+                x = 0
+                y = random.randint(0, HEIGHT)
+            
+            # Create enemy with sprite sheet and server URL
+            enemy = Enemy(self.enemy_sprite_sheet, x, y, server_url)
+            
+            # Scale enemy health based on wave number for progressive difficulty
+            # Base health: 50, increases by 20 per wave
+            # Wave 1: 50 HP, Wave 2: 70 HP, Wave 3: 90 HP, Wave 4: 110 HP, etc.
+            base_health = 50
+            health_per_wave = 20
+            enemy.health = base_health + (health_per_wave * (self.wave_number - 1))
+            enemy.max_health = enemy.health  # Update max health to match
+            
+            self.enemies.append(enemy)
+        
+        # Calculate the health for this wave for debug message
+        wave_enemy_health = base_health + (health_per_wave * (self.wave_number - 1))
+        print(f"Spawned {num_enemies} enemies for wave {self.wave_number} (HP: {wave_enemy_health})")
+    
+    def spawn_initial_resources(self):
+        """Spawn initial resources randomly across the map."""
+        # Number of each resource type to spawn initially
+        resource_counts = {
+            "code_fragments": random.randint(8, 12),
+            "energy_cores": random.randint(5, 8),
+            "data_shards": random.randint(3, 6)
+        }
+        
+        for resource_type, count in resource_counts.items():
+            for _ in range(count):
+                # Random position with some padding from edges
+                x = random.randint(100, WIDTH - 100)
+                y = random.randint(100, HEIGHT - 100)
+                
+                # Random amount (1-3)
+                amount = random.randint(1, 3)
+                
+                # Get sprite for this resource type
+                sprite = self.resource_sprites.get(resource_type, None)
+                
+                # Create resource with sprite
+                resource = Resource(x, y, resource_type, amount, sprite)
+                self.resources.append(resource)
+        
+        print(f"Spawned initial resources: {sum(resource_counts.values())} total")
+    
+    def spawn_resource_from_enemy(self, enemy_x, enemy_y):
+        """Spawn resources when an enemy is defeated."""
+        # Chance to drop resources (80% chance)
+        if random.random() < 0.8:
+            # Determine what to drop
+            drop_chances = {
+                "code_fragments": 0.5,   # 50% chance
+                "energy_cores": 0.3,     # 30% chance
+                "data_shards": 0.2       # 20% chance
+            }
+            
+            # Randomly select resource type based on weights
+            resource_type = random.choices(
+                list(drop_chances.keys()),
+                weights=list(drop_chances.values()),
+                k=1
+            )[0]
+            
+            # Random amount (1-2 for common, 1 for rare)
+            if resource_type == "data_shards":
+                amount = 1
+            else:
+                amount = random.randint(1, 2)
+            
+            # Spawn near enemy position with slight random offset
+            offset_x = random.randint(-20, 20)
+            offset_y = random.randint(-20, 20)
+            
+            # Get sprite for this resource type
+            sprite = self.resource_sprites.get(resource_type, None)
+            
+            resource = Resource(enemy_x + offset_x, enemy_y + offset_y, resource_type, amount, sprite)
+            self.resources.append(resource)
+            
+            # Visual feedback
+            self.add_effect("text", enemy_x, enemy_y - 30,
+                          text=f"+{amount} {resource_type.replace('_', ' ').title()}",
+                          color=resource.base_color,
+                          size=16,
+                          duration=1.5)
     
     def draw_gameplay_elements(self):
         """Draw all gameplay elements."""
-        # Clear screen
-        self.screen.fill(BG_COLOR)
-        
-        # Draw background elements
-        self.draw_background()
-        
-        # Draw world objects (if world generator exists)
+        # Draw world map with 3D blocks and animated background
         if self.world_generator:
-            # World generator handles its own drawing
-            pass
+            self.world_generator.draw_map(self.screen)
+        else:
+            # Fallback if world not initialized yet
+            self.screen.fill(BG_COLOR)
         
         # Draw resources
         for resource in self.resources:
@@ -491,14 +843,6 @@ class Game:
         for effect in self.effects_list:
             self.draw_effect(effect)
     
-    def draw_background(self):
-        """Draw background elements."""
-        # Draw grid or background pattern
-        for particle in self.bg_particles:
-            pygame.draw.circle(self.screen, GRAY, 
-                             (int(particle['x']), int(particle['y'])), 
-                             particle['size'])
-    
     def draw_effect(self, effect):
         """Draw a visual effect."""
         effect_type = effect.get('type')
@@ -511,30 +855,29 @@ class Game:
             font = pygame.font.Font(None, size)
             text_surf = font.render(text, True, color)
             
-            # Apply camera offset
-            screen_pos = self.camera_system.world_to_screen(x, y)
-            self.screen.blit(text_surf, screen_pos)
+            # For large screen-centered text (like wave announcements), don't apply camera offset
+            if size >= 60:
+                # Center the text on screen with screen shake offset
+                text_rect = text_surf.get_rect(center=(x + self.camera_offset_x, y + self.camera_offset_y))
+                self.screen.blit(text_surf, text_rect)
+            else:
+                # Apply camera offset for world-space text
+                screen_pos = self.camera_system.world_to_screen(x, y)
+                self.screen.blit(text_surf, (screen_pos[0] + self.camera_offset_x, 
+                                            screen_pos[1] + self.camera_offset_y))
         
         elif effect_type == 'explosion':
-            # Draw explosion effect
+            # Draw explosion effect with screen shake
             radius = int(20 - (effect['timer'] / 3))
             if radius > 0:
                 screen_pos = self.camera_system.world_to_screen(x, y)
                 pygame.draw.circle(self.screen, YELLOW, 
-                                 (int(screen_pos[0]), int(screen_pos[1])), 
+                                 (int(screen_pos[0] + self.camera_offset_x), 
+                                  int(screen_pos[1] + self.camera_offset_y)), 
                                  radius)
     
     # ==================== RESOURCE SHARING ====================
-    
-    def handle_resource_sharing_ui(self, resource_type=None):
-        """Handle resource sharing UI."""
-        # Implement resource sharing for multiplayer
-        if not self.player or not resource_type:
-            return
-        
-        if resource_type in self.player.resources and self.player.resources[resource_type] > 0:
-            # Share resource logic
-            print(f"Sharing {resource_type}")
+    # Resource sharing feature removed
     
     # ==================== MULTIPLAYER ====================
     
@@ -575,155 +918,89 @@ class Game:
         self.camera_system.reset()
         
         # Transition to gameplay
-        self.state_manager.transition_to("gameplay")
+        # Use immediate transition here as a safety, but the UI wrapper usually
+        # triggers a synchronous transition first for visual feedback.
+        self.state_manager.transition_to("gameplay", fade=False)
+
+    def restart_game_sync(self):
+        """Synchronous wrapper used by UI callbacks.
+
+        Performs an immediate (no-fade) transition so the player sees the
+        gameplay screen right away, then schedules the async reset to run
+        on the event loop to finish clearing state.
+        """
+        print("UI DEBUG: Restart requested - immediate transition to gameplay (sync)")
+        # Immediate visual transition
+        self.state_manager.transition_to("gameplay", fade=True)
+
+        # Perform synchronous minimal initialization so gameplay appears instantly
+        try:
+            # Reset basic state first
+            self.player = None
+            self.enemies = []
+            self.resources = []
+            self.power_ups = []
+            self.effects_list = []
+            self.score = 0
+            self.survival_time = 0
+            self.wave_number = 0
+            self.game_over_triggered = False
+            self.score_submitted = False
+            self.camera_system.reset()
+
+            # Initialize world and player synchronously
+            self.initialize_game_world_sync()
+        except Exception as e:
+            print("UI DEBUG: Synchronous restart failed:", e)
+
+    def request_restart_with_fade(self):
+        """Request a restart but use the fade transition.
+
+        Initialize immediately so the world is ready when the fade completes,
+        giving instant visual feedback.
+        """
+        print("UI DEBUG: Play Again clicked - restarting with fade")
+        
+        # Reset state immediately (during fade-out)
+        self.player = None
+        self.enemies = []
+        self.resources = []
+        self.power_ups = []
+        self.effects_list = []
+        self.score = 0
+        self.survival_time = 0
+        self.wave_number = 0
+        self.game_over_triggered = False
+        self.score_submitted = False
+        self.camera_system.reset()
+
+        # Initialize world synchronously so it's ready when fade completes
+        self.initialize_game_world_sync()
+        
+        # Now start the fade transition - world is already initialized
+        self.state_manager.transition_to("gameplay", fade=True)
     
-    # ==================== STATE HANDLERS ====================
-    
-    async def handle_menu_state(self, events, mouse_pos):
-        """Handle menu state."""
-        self.screen.fill(BG_COLOR)
+    def start_game_with_fade(self):
+        """Start game from menu with fade transition.
         
-        # Draw title
-        title_surf = self.font_manager.get_title_font().render("CODEBREAK", True, NEON_BLUE)
-        title_rect = title_surf.get_rect(center=(self.current_width // 2, 150))
-        self.screen.blit(title_surf, title_rect)
+        Initialize immediately so the world is ready when fade completes.
+        """
+        print("UI DEBUG: Start Game clicked - initializing with fade")
         
-        # Update and draw buttons
-        self.ui_manager.update_widgets(self.ui_manager.menu_buttons, mouse_pos)
-        for button in self.ui_manager.menu_buttons:
-            button.draw(self.screen, self.font_manager.get_button_font())
+        # Initialize world synchronously so it's ready when fade completes
+        # (Player and world will be created if not already present)
+        self.initialize_game_world_sync()
         
-        # Handle button clicks
-        for event in events:
-            self.ui_manager.handle_events(self.ui_manager.menu_buttons, event)
-    
-    async def handle_pause_state(self, events, mouse_pos):
-        """Handle pause state."""
-        # Draw game in background (paused)
-        self.draw_gameplay_elements()
+        # Now start the fade transition - world is already initialized
+        self.state_manager.transition_to("gameplay", fade=True)
+
+    def on_state_enter(self, state, from_state):
+        """Called by StateManager when a state is entered (immediately or after fade).
         
-        # Draw semi-transparent overlay
-        overlay = pygame.Surface((self.current_width, self.current_height))
-        overlay.set_alpha(180)
-        overlay.fill(BLACK)
-        self.screen.blit(overlay, (0, 0))
-        
-        # Draw pause text
-        pause_surf = self.font_manager.get_xl_font().render("PAUSED", True, NEON_PINK)
-        pause_rect = pause_surf.get_rect(center=(self.current_width // 2, 150))
-        self.screen.blit(pause_surf, pause_rect)
-        
-        # Update and draw buttons
-        self.ui_manager.update_widgets(self.ui_manager.pause_buttons, mouse_pos)
-        for button in self.ui_manager.pause_buttons:
-            button.draw(self.screen, self.font_manager.get_button_font())
-        
-        # Handle button clicks
-        for event in events:
-            self.ui_manager.handle_events(self.ui_manager.pause_buttons, event)
-    
-    async def handle_game_over_state(self, events, mouse_pos):
-        """Handle game over state."""
-        self.screen.fill(BG_COLOR)
-        
-        # Submit score if not already submitted
-        if not self.score_submitted and self.auth_manager.is_authenticated():
-            self.leaderboard_manager.submit_score(
-                self.auth_manager.username,
-                self.score,
-                self.survival_time
-            )
-            self.score_submitted = True
-        
-        # Draw game over text
-        game_over_surf = self.font_manager.get_xl_font().render("GAME OVER", True, NEON_RED)
-        game_over_rect = game_over_surf.get_rect(center=(self.current_width // 2, 150))
-        self.screen.blit(game_over_surf, game_over_rect)
-        
-        # Draw score
-        score_surf = self.font_manager.get_lg_font().render(f"Score: {self.score}", True, WHITE)
-        score_rect = score_surf.get_rect(center=(self.current_width // 2, 220))
-        self.screen.blit(score_surf, score_rect)
-        
-        # Draw survival time
-        time_surf = self.font_manager.get_md_font().render(
-            f"Survived: {int(self.survival_time)}s", True, WHITE
-        )
-        time_rect = time_surf.get_rect(center=(self.current_width // 2, 270))
-        self.screen.blit(time_surf, time_rect)
-        
-        # Update and draw buttons
-        self.ui_manager.update_widgets(self.ui_manager.game_over_buttons, mouse_pos)
-        for button in self.ui_manager.game_over_buttons:
-            button.draw(self.screen, self.font_manager.get_button_font())
-        
-        # Handle button clicks
-        for event in events:
-            self.ui_manager.handle_events(self.ui_manager.game_over_buttons, event)
-    
-    async def handle_leaderboard_state(self, events, mouse_pos):
-        """Handle leaderboard state."""
-        self.screen.fill(BG_COLOR)
-        
-        # Fetch leaderboard if needed
-        if self.leaderboard_manager.needs_update():
-            self.leaderboard_manager.fetch_leaderboard()
-        
-        # Draw title
-        title_surf = self.font_manager.get_xl_font().render("LEADERBOARD", True, NEON_BLUE)
-        title_rect = title_surf.get_rect(center=(self.current_width // 2, 80))
-        self.screen.blit(title_surf, title_rect)
-        
-        # Draw leaderboard entries
-        entries = self.leaderboard_manager.get_entries()
-        y_offset = 150
-        
-        for i, entry in enumerate(entries[:10]):
-            rank_text = f"{i + 1}. {entry['name']}: {entry['score']}"
-            rank_surf = self.font_manager.get_md_font().render(rank_text, True, WHITE)
-            rank_rect = rank_surf.get_rect(center=(self.current_width // 2, y_offset))
-            self.screen.blit(rank_surf, rank_rect)
-            y_offset += 40
-        
-        # Update and draw back button
-        if self.ui_manager.leaderboard_back_button:
-            self.ui_manager.leaderboard_back_button.update(mouse_pos)
-            self.ui_manager.leaderboard_back_button.draw(
-                self.screen, 
-                self.font_manager.get_button_font()
-            )
-        
-        # Handle button clicks
-        for event in events:
-            if self.ui_manager.leaderboard_back_button:
-                self.ui_manager.leaderboard_back_button.handle_event(event)
-    
-    async def handle_settings_state(self, events, mouse_pos):
-        """Handle settings state."""
-        self.screen.fill(BG_COLOR)
-        
-        # Draw title
-        title_surf = self.font_manager.get_xl_font().render("SETTINGS", True, NEON_BLUE)
-        title_rect = title_surf.get_rect(center=(self.current_width // 2, 80))
-        self.screen.blit(title_surf, title_rect)
-        
-        # Update and draw controls
-        self.ui_manager.update_widgets(self.ui_manager.settings_controls, mouse_pos)
-        for control in self.ui_manager.settings_controls:
-            control.draw(self.screen, self.font_manager.get_md_font())
-        
-        # Handle control events
-        for event in events:
-            self.ui_manager.handle_events(self.ui_manager.settings_controls, event)
-    
-    def draw_fade_overlay(self):
-        """Draw fade transition overlay."""
-        alpha = self.state_manager.get_fade_alpha()
-        if alpha > 0:
-            overlay = pygame.Surface((self.current_width, self.current_height))
-            overlay.set_alpha(alpha)
-            overlay.fill(BLACK)
-            self.screen.blit(overlay, (0, 0))
+        No longer needed for pending restart since we now initialize before the fade.
+        Kept for future use if needed.
+        """
+        pass
     
     # ==================== MAIN GAME LOOP ====================
     
@@ -758,22 +1035,29 @@ class Game:
             # Handle current state
             current_state = self.state_manager.get_state()
             
-            if current_state == "menu":
-                await self.handle_menu_state(events, mouse_pos)
-            elif current_state == "gameplay":
+            # During fade transitions, render the target state (not the old state)
+            # This prevents bouncing back to the previous screen during fade
+            if self.state_manager.is_transitioning() and self.state_manager.next_state:
+                render_state = self.state_manager.next_state
+            else:
+                render_state = current_state
+            
+            if render_state == "menu":
+                await self.state_manager.handle_menu_state(events, mouse_pos)
+            elif render_state == "gameplay":
                 await self.handle_gameplay_state(events, dt)
-            elif current_state == "pause":
-                await self.handle_pause_state(events, mouse_pos)
-            elif current_state == "game_over":
-                await self.handle_game_over_state(events, mouse_pos)
-            elif current_state == "leaderboard":
-                await self.handle_leaderboard_state(events, mouse_pos)
-            elif current_state == "settings":
-                await self.handle_settings_state(events, mouse_pos)
+            elif render_state == "pause":
+                await self.state_manager.handle_pause_state(events, mouse_pos)
+            elif render_state == "game_over":
+                await self.state_manager.handle_game_over_state(events, mouse_pos)
+            elif render_state == "leaderboard":
+                await self.state_manager.handle_leaderboard_state(events, mouse_pos)
+            elif render_state == "settings":
+                await self.state_manager.handle_settings_state(events, mouse_pos)
             
             # Draw fade overlay if transitioning
             if self.state_manager.is_transitioning():
-                self.draw_fade_overlay()
+                self.state_manager.draw_fade_overlay()
             
             pygame.display.flip()
         

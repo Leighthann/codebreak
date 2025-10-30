@@ -3,6 +3,7 @@
 Font Manager for loading and managing game fonts.
 """
 import pygame
+import os
 from typing import Dict, Optional
 
 
@@ -12,24 +13,30 @@ class FontManager:
     def __init__(self):
         pygame.font.init()
         self.fonts: Dict[str, pygame.font.Font] = {}
+        
+        # Get the directory where this file is located
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.fonts_dir = os.path.join(self.base_dir, "fonts")
+        
         self.load_fonts()
     
     def load_fonts(self):
         """Load all game fonts with fallback to system fonts."""
         font_configs = [
-            ("title", "frontend/fonts/PropolishRufftu-BLLyd.ttf", 60),
-            ("button", "frontend/fonts/GlitchGoblin-2O87v.ttf", 40),
-            ("info", "frontend/fonts/VeniteAdoremusStraight-Yzo6v.ttf", 24),
-            ("xl", "frontend/fonts/Cyberbang-7O9OB.ttf", 48),
-            ("lg", "frontend/fonts/Cyberbang-7O9OB.ttf", 36),
-            ("md", "frontend/fonts/Cyberbang-7O9OB.ttf", 24),
-            ("sm", "frontend/fonts/Cyberbang-7O9OB.ttf", 18)
+            ("title", "PropolishRufftu-BLLyd.ttf", 60),
+            ("button", "GlitchGoblin-2O87v.ttf", 40),
+            ("info", "VeniteAdoremusStraight-Yzo6v.ttf", 24),
+            ("xl", "Cyberbang-7O9OB.ttf", 48),
+            ("lg", "Cyberbang-7O9OB.ttf", 36),
+            ("md", "Cyberbang-7O9OB.ttf", 24),
+            ("sm", "Cyberbang-7O9OB.ttf", 18)
         ]
         
-        for name, path, size in font_configs:
+        for name, filename, size in font_configs:
+            path = os.path.join(self.fonts_dir, filename)
             try:
                 self.fonts[name] = pygame.font.Font(path, size)
-                print(f"Loaded font '{name}' from {path}")
+                print(f"Loaded font '{name}' from {filename}")
             except Exception as e:
                 print(f"Warning: Could not load font '{name}' from {path}: {e}")
                 print(f"Using system font for '{name}'")

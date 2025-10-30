@@ -42,9 +42,26 @@ class Button:
         
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.hovered:
-                self.callback()
-                return True
+            # Prefer using the actual event position for click detection (more robust)
+            try:
+                pos = event.pos
+            except AttributeError:
+                pos = None
+
+            if pos:
+                if self.rect.collidepoint(pos):
+                    print(f"UI DEBUG: Button '{self.text}' clicked at {pos}")
+                    try:
+                        self.callback()
+                        print(f"UI DEBUG: Button '{self.text}' callback executed")
+                    except Exception as e:
+                        print(f"UI DEBUG: Button '{self.text}' callback raised: {e}")
+                    return True
+            else:
+                # Fallback to hovered state if event has no position
+                if self.hovered:
+                    self.callback()
+                    return True
         return False
 
 

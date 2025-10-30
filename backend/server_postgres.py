@@ -55,22 +55,154 @@ def get_db_connection():
             connection = psycopg2.connect(**DB_PARAMS)
             print("Connection successful with env parameters!")
             
-            # Initialize resource_transfers table if it doesn't exist
+            # Resource transfers table removed - feature disabled
             cursor = connection.cursor()
+            
+            # Add game_id column to leaderboard table if it doesn't exist
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS resource_transfers (
-                    id SERIAL PRIMARY KEY,
-                    game_id VARCHAR(255) NOT NULL,
-                    from_username VARCHAR(255) NOT NULL,
-                    to_username VARCHAR(255) NOT NULL,
-                    resource_type VARCHAR(50) NOT NULL,
-                    amount INTEGER NOT NULL,
-                    transferred_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (from_username) REFERENCES players(username),
-                    FOREIGN KEY (to_username) REFERENCES players(username),
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='leaderboard' AND column_name='game_id'
+                    ) THEN
+                        ALTER TABLE leaderboard ADD COLUMN game_id VARCHAR(255);
+                    END IF;
+                END $$;
+            """)
+            
+            # Create index on game_id for faster queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_leaderboard_game_id ON leaderboard(game_id);
+            """)
+            
+            # Create composite index for game_id + score queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_leaderboard_game_score ON leaderboard(game_id, score DESC);
+            """)
+            
+            # Add foreign key constraint on leaderboard.game_id
+            cursor.execute("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints 
+                        WHERE constraint_name='fk_leaderboard_game' AND table_name='leaderboard'
+                    ) THEN
+                        ALTER TABLE leaderboard 
+                        ADD CONSTRAINT fk_leaderboard_game 
+                        FOREIGN KEY (game_id) REFERENCES active_games(game_id) ON DELETE SET NULL;
+                    END IF;
+                END $$;
+            """)
+            
+            # Create unique constraint for game-specific leaderboard entries (one score per player per game)
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_unique_player_game 
+                ON leaderboard(username, game_id) WHERE game_id IS NOT NULL;
+            """)
+            
+            # Create unique constraint for global leaderboard entries (one global score per player)
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_unique_player_global 
+                ON leaderboard(username) WHERE game_id IS NULL;
+            """)
+            
+            # Create game_sessions table for completed game history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS game_sessions (
+                    session_id SERIAL PRIMARY KEY,
+                    game_id VARCHAR(255) UNIQUE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ended_at TIMESTAMP,
+                    duration_seconds INTEGER,
+                    total_players INTEGER DEFAULT 0,
+                    winner_username VARCHAR(255),
+                    game_mode VARCHAR(50) DEFAULT 'standard',
+                    FOREIGN KEY (winner_username) REFERENCES players(username),
                     FOREIGN KEY (game_id) REFERENCES active_games(game_id) ON DELETE CASCADE
                 )
             """)
+            
+            # Create index on game_sessions
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_game_sessions_game_id ON game_sessions(game_id);
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_game_sessions_winner ON game_sessions(winner_username);
+            """)
+            
+            # Create player_stats table for aggregate statistics
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS player_stats (
+                    stat_id SERIAL PRIMARY KEY,
+                    username VARCHAR(255) UNIQUE NOT NULL,
+                    total_games_played INTEGER DEFAULT 0,
+                    total_games_won INTEGER DEFAULT 0,
+                    total_score INTEGER DEFAULT 0,
+                    highest_score INTEGER DEFAULT 0,
+                    total_playtime_seconds INTEGER DEFAULT 0,
+                    enemies_defeated INTEGER DEFAULT 0,
+                    resources_collected INTEGER DEFAULT 0,
+                    last_played TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (username) REFERENCES players(username) ON DELETE CASCADE
+                )
+            """)
+            
+            # Create indexes on player_stats
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_player_stats_username ON player_stats(username);
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_player_stats_total_score ON player_stats(total_score DESC);
+            """)
+            
+            # Create achievements table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS achievements (
+                    achievement_id SERIAL PRIMARY KEY,
+                    achievement_name VARCHAR(100) UNIQUE NOT NULL,
+                    description TEXT,
+                    points INTEGER DEFAULT 0,
+                    icon_path VARCHAR(255),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create player_achievements table (junction table)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS player_achievements (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(255) NOT NULL,
+                    achievement_id INTEGER NOT NULL,
+                    unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (username) REFERENCES players(username) ON DELETE CASCADE,
+                    FOREIGN KEY (achievement_id) REFERENCES achievements(achievement_id) ON DELETE CASCADE,
+                    UNIQUE(username, achievement_id)
+                )
+            """)
+            
+            # Create indexes on player_achievements
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_player_achievements_username ON player_achievements(username);
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_player_achievements_achievement ON player_achievements(achievement_id);
+            """)
+            
+            # Insert default achievements if they don't exist
+            cursor.execute("""
+                INSERT INTO achievements (achievement_name, description, points) VALUES
+                    ('First Blood', 'Defeat your first enemy', 10),
+                    ('Score Master', 'Reach a score of 1000', 25),
+                    ('Survivor', 'Survive for 10 minutes', 50),
+                    ('Resource Hoarder', 'Collect 100 resources', 15),
+                    ('Legendary Collector', 'Collect 500 resources', 50),
+                    ('Victory Royale', 'Win your first game', 100)
+                ON CONFLICT (achievement_name) DO NOTHING;
+            """)
+            
             connection.commit()
             cursor.close()
             
@@ -87,22 +219,154 @@ def get_db_connection():
             connection = psycopg2.connect(**hardcoded_params)
             print("Connection successful with hardcoded password!")
             
-            # Initialize resource_transfers table if it doesn't exist
+            # Resource transfers table removed - feature disabled
             cursor = connection.cursor()
+            
+            # Add game_id column to leaderboard table if it doesn't exist
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS resource_transfers (
-                    id SERIAL PRIMARY KEY,
-                    game_id VARCHAR(255) NOT NULL,
-                    from_username VARCHAR(255) NOT NULL,
-                    to_username VARCHAR(255) NOT NULL,
-                    resource_type VARCHAR(50) NOT NULL,
-                    amount INTEGER NOT NULL,
-                    transferred_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (from_username) REFERENCES players(username),
-                    FOREIGN KEY (to_username) REFERENCES players(username),
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='leaderboard' AND column_name='game_id'
+                    ) THEN
+                        ALTER TABLE leaderboard ADD COLUMN game_id VARCHAR(255);
+                    END IF;
+                END $$;
+            """)
+            
+            # Create index on game_id for faster queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_leaderboard_game_id ON leaderboard(game_id);
+            """)
+            
+            # Create composite index for game_id + score queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_leaderboard_game_score ON leaderboard(game_id, score DESC);
+            """)
+            
+            # Add foreign key constraint on leaderboard.game_id
+            cursor.execute("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints 
+                        WHERE constraint_name='fk_leaderboard_game' AND table_name='leaderboard'
+                    ) THEN
+                        ALTER TABLE leaderboard 
+                        ADD CONSTRAINT fk_leaderboard_game 
+                        FOREIGN KEY (game_id) REFERENCES active_games(game_id) ON DELETE SET NULL;
+                    END IF;
+                END $$;
+            """)
+            
+            # Create unique constraint for game-specific leaderboard entries (one score per player per game)
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_unique_player_game 
+                ON leaderboard(username, game_id) WHERE game_id IS NOT NULL;
+            """)
+            
+            # Create unique constraint for global leaderboard entries (one global score per player)
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_unique_player_global 
+                ON leaderboard(username) WHERE game_id IS NULL;
+            """)
+            
+            # Create game_sessions table for completed game history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS game_sessions (
+                    session_id SERIAL PRIMARY KEY,
+                    game_id VARCHAR(255) UNIQUE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ended_at TIMESTAMP,
+                    duration_seconds INTEGER,
+                    total_players INTEGER DEFAULT 0,
+                    winner_username VARCHAR(255),
+                    game_mode VARCHAR(50) DEFAULT 'standard',
+                    FOREIGN KEY (winner_username) REFERENCES players(username),
                     FOREIGN KEY (game_id) REFERENCES active_games(game_id) ON DELETE CASCADE
                 )
             """)
+            
+            # Create index on game_sessions
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_game_sessions_game_id ON game_sessions(game_id);
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_game_sessions_winner ON game_sessions(winner_username);
+            """)
+            
+            # Create player_stats table for aggregate statistics
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS player_stats (
+                    stat_id SERIAL PRIMARY KEY,
+                    username VARCHAR(255) UNIQUE NOT NULL,
+                    total_games_played INTEGER DEFAULT 0,
+                    total_games_won INTEGER DEFAULT 0,
+                    total_score INTEGER DEFAULT 0,
+                    highest_score INTEGER DEFAULT 0,
+                    total_playtime_seconds INTEGER DEFAULT 0,
+                    enemies_defeated INTEGER DEFAULT 0,
+                    resources_collected INTEGER DEFAULT 0,
+                    last_played TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (username) REFERENCES players(username) ON DELETE CASCADE
+                )
+            """)
+            
+            # Create indexes on player_stats
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_player_stats_username ON player_stats(username);
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_player_stats_total_score ON player_stats(total_score DESC);
+            """)
+            
+            # Create achievements table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS achievements (
+                    achievement_id SERIAL PRIMARY KEY,
+                    achievement_name VARCHAR(100) UNIQUE NOT NULL,
+                    description TEXT,
+                    points INTEGER DEFAULT 0,
+                    icon_path VARCHAR(255),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create player_achievements table (junction table)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS player_achievements (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(255) NOT NULL,
+                    achievement_id INTEGER NOT NULL,
+                    unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (username) REFERENCES players(username) ON DELETE CASCADE,
+                    FOREIGN KEY (achievement_id) REFERENCES achievements(achievement_id) ON DELETE CASCADE,
+                    UNIQUE(username, achievement_id)
+                )
+            """)
+            
+            # Create indexes on player_achievements
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_player_achievements_username ON player_achievements(username);
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_player_achievements_achievement ON player_achievements(achievement_id);
+            """)
+            
+            # Insert default achievements if they don't exist
+            cursor.execute("""
+                INSERT INTO achievements (achievement_name, description, points) VALUES
+                    ('First Blood', 'Defeat your first enemy', 10),
+                    ('Score Master', 'Reach a score of 1000', 25),
+                    ('Survivor', 'Survive for 10 minutes', 50),
+                    ('Resource Hoarder', 'Collect 100 resources', 15),
+                    ('Legendary Collector', 'Collect 500 resources', 50),
+                    ('Victory Royale', 'Win your first game', 100)
+                ON CONFLICT (achievement_name) DO NOTHING;
+            """)
+            
             connection.commit()
             cursor.close()
             
@@ -214,16 +478,7 @@ class PlayerModel(BaseModel):
     score: int = 0
     inventory: Optional[Dict] = None
 
-# Resource sharing models
-class ResourceTransfer(BaseModel):
-    to_username: str
-    resource_type: str
-    amount: int
-
-class ResourceTransferResponse(BaseModel):
-    status: str
-    message: str
-    transfer_id: Optional[int] = None
+# Resource sharing models removed - feature disabled
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -765,72 +1020,9 @@ async def websocket_endpoint(websocket: WebSocket, username: str, token: Optiona
                         else:
                             await manager.broadcast(chat_data)
                 
-                elif action == "share_resource":
-                    if all(k in data for k in ["to_username", "resource_type", "amount", "game_id"]):
-                        try:
-                            # Create a ResourceTransfer object
-                            transfer = ResourceTransfer(
-                                to_username=data["to_username"],
-                                resource_type=data["resource_type"],
-                                amount=data["amount"]
-                            )
-                            
-                            # Call the share_resource endpoint
-                            response = await share_resource(
-                                game_id=data["game_id"],
-                                transfer=transfer,
-                                current_user={"username": username}
-                            )
-                            
-                            # Send success response back to sender
-                            await websocket.send_json({
-                                "event": "resource_share_response",
-                                "status": "success",
-                                "message": "Resource shared successfully",
-                                "transfer_id": response.transfer_id
-                            })
-                            
-                        except HTTPException as e:
-                            # Send error response back to sender
-                            await websocket.send_json({
-                                "event": "resource_share_response",
-                                "status": "error",
-                                "message": str(e.detail)
-                            })
-                        except Exception as e:
-                            # Send generic error response
-                            await websocket.send_json({
-                                "event": "resource_share_response",
-                                "status": "error",
-                                "message": "Failed to share resource"
-                            })
-                    else:
-                        await websocket.send_json({
-                            "event": "resource_share_response",
-                            "status": "error",
-                            "message": "Missing required fields for resource sharing"
-                        })
-                
-                elif action == "request_transfers":
-                    if "game_id" in data:
-                        try:
-                            # Get transfer history
-                            transfers = await get_transfers(
-                                game_id=data["game_id"],
-                                current_user={"username": username}
-                            )
-                            
-                            # Send transfer history to requester
-                            await websocket.send_json({
-                                "event": "transfer_history",
-                                "transfers": transfers["transfers"]
-                            })
-                        except Exception as e:
-                            await websocket.send_json({
-                                "event": "transfer_history",
-                                "status": "error",
-                                "message": str(e)
-                            })
+                # Resource sharing feature removed
+                # elif action == "share_resource":
+                # elif action == "request_transfers":
                 
                 elif action == "leave_game":
                     # Handle a player leaving a game
@@ -1081,20 +1273,32 @@ async def download_client():
         raise HTTPException(status_code=500, detail=f"Download error: {str(e)}")
 
 @app.get("/leaderboard")
-async def get_leaderboard(limit: int = 10, current_user = Depends(get_current_user)):
-    """Get top leaderboard entries"""
+async def get_leaderboard(limit: int = 10, game_id: str = None, current_user = Depends(get_current_user)):
+    """Get top leaderboard entries (global or game-specific)"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         
-        # Get top scores
-        cursor.execute("""
-            SELECT l.*, p.last_login 
-            FROM leaderboard l
-            LEFT JOIN players p ON l.username = p.username
-            ORDER BY l.score DESC
-            LIMIT %s
-        """, (limit,))
+        # Get top scores - filter by game_id if provided
+        if game_id:
+            cursor.execute("""
+                SELECT l.*, p.last_login 
+                FROM leaderboard l
+                LEFT JOIN players p ON l.username = p.username
+                WHERE l.game_id = %s
+                ORDER BY l.score DESC
+                LIMIT %s
+            """, (game_id, limit))
+        else:
+            # Global leaderboard - only entries without game_id
+            cursor.execute("""
+                SELECT l.*, p.last_login 
+                FROM leaderboard l
+                LEFT JOIN players p ON l.username = p.username
+                WHERE l.game_id IS NULL
+                ORDER BY l.score DESC
+                LIMIT %s
+            """, (limit,))
         
         entries = []
         for row in cursor.fetchall():
@@ -1110,19 +1314,24 @@ async def get_leaderboard(limit: int = 10, current_user = Depends(get_current_us
         cursor.close()
         conn.close()
         
-        return {"leaderboard": entries}
+        return {
+            "leaderboard": entries,
+            "game_id": game_id,
+            "type": "game" if game_id else "global"
+        }
     except Exception as e:
         logger.error(f"Error fetching leaderboard: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching leaderboard: {str(e)}")
 
 @app.post("/leaderboard")
 async def submit_score(score_data: dict, current_user = Depends(get_current_user)):
-    """Submit a new score to the leaderboard"""
+    """Submit a new score to the leaderboard (supports both global and game-specific)"""
     try:
         username = current_user["username"]
         score = score_data.get("score", 0)
         wave_reached = score_data.get("wave_reached", 0)
         survival_time = score_data.get("survival_time", 0)
+        game_id = score_data.get("game_id")  # Optional: for game-specific leaderboards
         
         # Validate score data
         if score <= 0:
@@ -1131,8 +1340,17 @@ async def submit_score(score_data: dict, current_user = Depends(get_current_user
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Check if user already has a score
-        cursor.execute("SELECT id, score FROM leaderboard WHERE username = %s", (username,))
+        # Check if user already has a score for this game (or global if no game_id)
+        if game_id:
+            cursor.execute(
+                "SELECT id, score FROM leaderboard WHERE username = %s AND game_id = %s", 
+                (username, game_id)
+            )
+        else:
+            cursor.execute(
+                "SELECT id, score FROM leaderboard WHERE username = %s AND game_id IS NULL", 
+                (username,)
+            )
         existing_score = cursor.fetchone()
         
         # Insert or update score
@@ -1152,13 +1370,13 @@ async def submit_score(score_data: dict, current_user = Depends(get_current_user
             # Insert new score
             cursor.execute(
                 """INSERT INTO leaderboard 
-                   (username, score, wave_reached, survival_time, date) 
-                   VALUES (%s, %s, %s, %s, %s)""",
-                (username, score, wave_reached, survival_time, datetime.now())
+                   (username, score, wave_reached, survival_time, date, game_id) 
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (username, score, wave_reached, survival_time, datetime.now(), game_id)
             )
             updated = True
             
-        # Update player score in players table too
+        # Update player score in players table too (only for global best)
         cursor.execute(
             "UPDATE players SET score = GREATEST(score, %s) WHERE username = %s",
             (score, username)
@@ -1171,13 +1389,77 @@ async def submit_score(score_data: dict, current_user = Depends(get_current_user
         return {
             "status": "success",
             "message": "Score updated successfully" if updated else "Score not updated (current score is higher)",
-            "score": score
+            "score": score,
+            "game_id": game_id
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error submitting score: {e}")
         raise HTTPException(status_code=500, detail=f"Error submitting score: {str(e)}")
+
+@app.get("/leaderboard/game/{game_id}")
+async def get_game_leaderboard(game_id: str, limit: int = 10, current_user = Depends(get_current_user)):
+    """Get leaderboard for a specific game session"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        # Verify game exists
+        cursor.execute("SELECT game_id FROM active_games WHERE game_id = %s", (game_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Game not found")
+        
+        # Get game-specific leaderboard
+        cursor.execute("""
+            SELECT l.*, p.last_login 
+            FROM leaderboard l
+            LEFT JOIN players p ON l.username = p.username
+            WHERE l.game_id = %s
+            ORDER BY l.score DESC
+            LIMIT %s
+        """, (game_id, limit))
+        
+        entries = []
+        for row in cursor.fetchall():
+            entry = dict(row)
+            # Format dates as ISO strings for JSON serialization
+            if entry.get("date"):
+                entry["date"] = entry["date"].isoformat()
+            if entry.get("last_login"):
+                entry["last_login"] = entry["last_login"].isoformat()
+                
+            entries.append(entry)
+        
+        # Get game info
+        cursor.execute("""
+            SELECT ag.host_username, ag.created_at, COUNT(gp.username) as player_count
+            FROM active_games ag
+            LEFT JOIN game_players gp ON ag.game_id = gp.game_id
+            WHERE ag.game_id = %s
+            GROUP BY ag.game_id, ag.host_username, ag.created_at
+        """, (game_id,))
+        
+        game_info = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "leaderboard": entries,
+            "game_id": game_id,
+            "type": "game",
+            "game_info": {
+                "host": game_info["host_username"] if game_info else None,
+                "created_at": game_info["created_at"].isoformat() if game_info and game_info["created_at"] else None,
+                "player_count": game_info["player_count"] if game_info else 0
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching game leaderboard: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching game leaderboard: {str(e)}")
 
 # Public version of leaderboard endpoint (no auth required)
 @app.get("/leaderboard/public")
@@ -1358,169 +1640,7 @@ async def admin_delete_game(game_id: str, current_user = Depends(is_admin_user))
             detail=f"Failed to delete game: {str(e)}"
         )
 
-# Resource sharing endpoints
-@app.post("/game/{game_id}/share-resource")
-async def share_resource(
-    game_id: str,
-    transfer: ResourceTransfer,
-    current_user = Depends(get_current_user)
-):
-    """Handle resource sharing between players in the same game"""
-    try:
-        from_username = current_user["username"]
-        
-        # Validate users are in the same game
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        
-        # Check if both users are in the game
-        cursor.execute("""
-            SELECT username FROM game_players 
-            WHERE game_id = %s AND username IN (%s, %s)
-        """, (game_id, from_username, transfer.to_username))
-        players = [row["username"] for row in cursor.fetchall()]
-        
-        if len(players) != 2:
-            raise HTTPException(
-                status_code=400,
-                detail="Both players must be in the same game"
-            )
-            
-        # Validate resource amount
-        cursor.execute("""
-            SELECT inventory FROM players WHERE username = %s
-        """, (from_username,))
-        player_inventory = cursor.fetchone()["inventory"]
-        
-        if not player_inventory or transfer.resource_type not in player_inventory:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Resource {transfer.resource_type} not found in inventory"
-            )
-            
-        current_amount = player_inventory[transfer.resource_type]
-        if current_amount < transfer.amount:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Insufficient {transfer.resource_type} (have: {current_amount}, need: {transfer.amount})"
-            )
-            
-        # Update sender's inventory
-        player_inventory[transfer.resource_type] -= transfer.amount
-        cursor.execute("""
-            UPDATE players 
-            SET inventory = %s 
-            WHERE username = %s
-        """, (json.dumps(player_inventory), from_username))
-        
-        # Update receiver's inventory
-        cursor.execute("""
-            SELECT inventory FROM players WHERE username = %s
-        """, (transfer.to_username,))
-        receiver_inventory = cursor.fetchone()["inventory"]
-        
-        if transfer.resource_type not in receiver_inventory:
-            receiver_inventory[transfer.resource_type] = 0
-        receiver_inventory[transfer.resource_type] += transfer.amount
-        
-        cursor.execute("""
-            UPDATE players 
-            SET inventory = %s 
-            WHERE username = %s
-        """, (json.dumps(receiver_inventory), transfer.to_username))
-        
-        # Record the transfer
-        cursor.execute("""
-            INSERT INTO resource_transfers 
-            (game_id, from_username, to_username, resource_type, amount)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id
-        """, (game_id, from_username, transfer.to_username, 
-              transfer.resource_type, transfer.amount))
-        
-        transfer_id = cursor.fetchone()["id"]
-        conn.commit()
-        
-        # Notify players through WebSocket
-        transfer_data = {
-            "event": "resource_transfer",
-            "transfer_id": transfer_id,
-            "from_username": from_username,
-            "to_username": transfer.to_username,
-            "resource_type": transfer.resource_type,
-            "amount": transfer.amount
-        }
-        
-        await manager.broadcast_to_game(game_id, transfer_data)
-        
-        return ResourceTransferResponse(
-            status="success",
-            message="Resource transfer successful",
-            transfer_id=transfer_id
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Resource transfer error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to transfer resource: {str(e)}"
-        )
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.get("/game/{game_id}/transfers")
-async def get_transfers(
-    game_id: str,
-    current_user = Depends(get_current_user)
-):
-    """Get resource transfer history for a game"""
-    try:
-        username = current_user["username"]
-        
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        
-        # Verify user is in the game
-        cursor.execute("""
-            SELECT 1 FROM game_players 
-            WHERE game_id = %s AND username = %s
-        """, (game_id, username))
-        
-        if not cursor.fetchone():
-            raise HTTPException(
-                status_code=403,
-                detail="Not authorized to view transfers for this game"
-            )
-            
-        # Get transfer history
-        cursor.execute("""
-            SELECT * FROM resource_transfers 
-            WHERE game_id = %s 
-            ORDER BY transferred_at DESC
-        """, (game_id,))
-        
-        transfers = []
-        for row in cursor.fetchall():
-            transfer = dict(row)
-            transfer["transferred_at"] = transfer["transferred_at"].isoformat()
-            transfers.append(transfer)
-            
-        return {"transfers": transfers}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching transfers: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to fetch transfers: {str(e)}"
-        )
-    finally:
-        cursor.close()
-        conn.close()
+# Resource sharing endpoints removed - feature disabled
 
 if __name__ == "__main__":
     import uvicorn

@@ -40,14 +40,14 @@ class CraftingSystem:
                 name="Data Shield",
                 description="Temporary shield that absorbs damage",
                 requirements={"code_fragments": 5, "energy_cores": 2},
-                effect={"type": "shield", "duration": 10, "amount": 50},
+                effect={"type": "shield", "duration": 10, "defense": 50},
                 icon_color=CYAN
             ),
             CraftingRecipe(
                 name="Hack Tool",
                 description="Confuses nearby enemies briefly",
                 requirements={"code_fragments": 3, "data_shards": 4},
-                effect={"type": "confuse", "duration": 5, "radius": 150},
+                effect={"type": "confuse", "duration": 5, "range": 150},
                 icon_color=NEON_GREEN
             ),
             CraftingRecipe(
@@ -115,7 +115,9 @@ class CraftingSystem:
             "display_name": recipe.name,
             "description": recipe.description,
             "effect": recipe.effect.copy(),
-            "icon_color": recipe.icon_color
+            "stats": recipe.effect.copy(),  # Add stats for compatibility with use_tool()
+            "icon_color": recipe.icon_color,
+            "durability": 10  # All crafted items start with 10 uses
         }
         
         # Add to player's crafted items

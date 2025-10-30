@@ -26,6 +26,8 @@ class LeaderboardManager:
         self.loading: bool = False
         self.auth_token: Optional[str] = None
         self.username: Optional[str] = None
+        self.current_game_id: Optional[str] = None  # Track current game session
+        self.view_mode: str = "global"  # "global" or "game"
         
         # Load authentication from config if available
         self._load_auth_config()
@@ -48,12 +50,13 @@ class LeaderboardManager:
         except Exception as e:
             print(f"Could not load auth config: {e}")
     
-    def fetch_leaderboard(self, force: bool = False) -> bool:
+    def fetch_leaderboard(self, force: bool = False, game_id: str = None) -> bool:
         """
         Fetch leaderboard data from server.
         
         Args:
             force: Force update even if within update interval
+            game_id: Optional game ID to fetch game-specific leaderboard (overrides view mode)
             
         Returns:
             True if fetch was successful, False otherwise
@@ -71,11 +74,31 @@ class LeaderboardManager:
         self.error_message = None
         
         try:
+            # Determine which leaderboard to fetch
+            # Priority: explicit game_id parameter > view mode + current_game_id > global
+            fetch_game_id = game_id
+            if not fetch_game_id and self.view_mode == "game" and self.current_game_id:
+                fetch_game_id = self.current_game_id
+            
+            # Build URL with optional game_id parameter
+            url = f"{self.server_url}/leaderboard"
+            params = {}
+            if fetch_game_id:
+                params["game_id"] = fetch_game_id
+            
+            print(f"DEBUG: Fetching leaderboard from {url}")
+            print(f"DEBUG: Params: {params}")
+            print(f"DEBUG: Auth headers: {self.auth_headers}")
+            
             response = requests.get(
-                f"{self.server_url}/leaderboard", 
+                url,
+                params=params,
                 headers=self.auth_headers,
                 timeout=5
             )
+            
+            print(f"DEBUG: Leaderboard fetch response: {response.status_code}")
+            print(f"DEBUG: Response body: {response.text[:500]}")  # First 500 chars
             
             if response.status_code == 200:
                 data = response.json()
@@ -89,7 +112,8 @@ class LeaderboardManager:
                         "score": entry.get("score", 0),
                         "time": entry.get("survival_time", entry.get("time", 0)),
                         "wave": entry.get("wave_reached", 0),
-                        "last_login": entry.get("last_login", None)
+                        "last_login": entry.get("last_login", None),
+                        "game_id": entry.get("game_id", None)
                     })
                 
                 # Sort by score (descending)
@@ -136,7 +160,7 @@ class LeaderboardManager:
                 return i + 1
         return None
     
-    def submit_score(self, username: str, score: int, survival_time: float = 0, wave_reached: int = 0) -> bool:
+    def submit_score(self, username: str, score: int, survival_time: float = 0, wave_reached: int = 0, game_id: str = None) -> bool:
         """
         Submit a score to the server.
         
@@ -145,12 +169,14 @@ class LeaderboardManager:
             score: Player score
             survival_time: How long the player survived
             wave_reached: Highest wave reached
+            game_id: Optional game session ID for game-specific leaderboards
             
         Returns:
             True if submission was successful, False otherwise
         """
         if not self.auth_token:
             self.error_message = "You must be logged in to submit scores"
+            print("DEBUG: Submit score failed - no auth token")
             return False
         
         try:
@@ -161,17 +187,28 @@ class LeaderboardManager:
                 "wave_reached": wave_reached
             }
             
+            # Add game_id if provided (for game-specific leaderboards)
+            if game_id:
+                payload["game_id"] = game_id
+            
+            print(f"DEBUG: Submitting score to {self.server_url}/leaderboard")
+            print(f"DEBUG: Auth headers: {self.auth_headers}")
+            print(f"DEBUG: Payload: {payload}")
+            
             response = requests.post(
-                f"{self.server_url}/leaderboard/submit",
+                f"{self.server_url}/leaderboard",
                 json=payload,
                 headers=self.auth_headers,
                 timeout=5
             )
             
+            print(f"DEBUG: Submit score response: {response.status_code}")
+            print(f"DEBUG: Response body: {response.text}")
+            
             if response.status_code == 200:
                 print(f"Score submitted successfully: {score}")
                 # Force update after submission
-                self.fetch_leaderboard(force=True)
+                self.fetch_leaderboard(force=True, game_id=game_id)
                 return True
             else:
                 self.error_message = f"Failed to submit score: {response.status_code}"
@@ -217,6 +254,32 @@ class LeaderboardManager:
         if self.last_update > 0:
             return datetime.fromtimestamp(self.last_update).strftime("%H:%M:%S")
         return "Never"
+    
+    def set_game_id(self, game_id: Optional[str]):
+        """Set the current game ID for game-specific leaderboards."""
+        self.current_game_id = game_id
+    
+    def toggle_view_mode(self):
+        """Toggle between global and game-specific leaderboard views."""
+        if self.current_game_id:
+            self.view_mode = "game" if self.view_mode == "global" else "global"
+            self.clear_cache()  # Clear cache to force refresh
+            return True
+        return False  # Can't toggle if no game_id
+    
+    def set_view_mode(self, mode: str):
+        """Set the leaderboard view mode ('global' or 'game')."""
+        if mode in ["global", "game"]:
+            self.view_mode = mode
+            self.clear_cache()
+    
+    def get_view_mode(self) -> str:
+        """Get the current view mode."""
+        return self.view_mode
+    
+    def can_view_game_leaderboard(self) -> bool:
+        """Check if game-specific leaderboard is available."""
+        return self.current_game_id is not None
 
 
 class LeaderboardUI:

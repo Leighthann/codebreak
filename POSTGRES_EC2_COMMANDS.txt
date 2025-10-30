@@ -44,7 +44,7 @@ CONNECTING TO DATABASE
 PGPASSWORD='%w>Iq3ry!' psql -h localhost -U codebreak_admin -d codebreak_db
 
 # Connect as postgres superuser
-sudo -u postgres psql
+sudo -u postgres psql /  sudo -u admin psql
 
 # Connect to specific database
 sudo -u postgres psql -d codebreak_db
