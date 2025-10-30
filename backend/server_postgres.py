@@ -39,7 +39,7 @@ DB_PARAMS = {
     "database": os.getenv("DB_NAME", "codebreak_db"),
     "user": os.getenv("DB_USER", "codebreak_admin"),
     "password": password,  # Direct assignment from variable
-    "host": os.getenv("DB_HOST", "localhost"),
+    "host": os.getenv("DB_HOST", "codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com"),
     "port": int(os.getenv("DB_PORT", "5432"))
 }
 

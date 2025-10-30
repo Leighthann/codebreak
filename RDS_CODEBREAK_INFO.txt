@@ -1,0 +1,407 @@
+================================================================================
+CODEBREAK - AWS RDS POSTGRESQL DATABASE INFORMATION
+================================================================================
+Last Updated: October 30, 2025
+
+================================================================================
+AWS RDS INSTANCE DETAILS
+================================================================================
+
+RDS Instance Identifier:  codebreak-db
+RDS Endpoint:             codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com
+Region:                   us-east-2 (Ohio)
+Port:                     5432
+Database Engine:          PostgreSQL
+Database Name:            codebreak_db
+Master Username:          codebreak_admin
+Master Password:          %w>Iq3ry!
+
+Private IP:               172.31.48.52
+Status:                   Available
+
+================================================================================
+EC2 INSTANCE DETAILS
+================================================================================
+
+EC2 Public IP:            3.19.244.138
+EC2 Private IP:           172.31.21.224
+Region:                   us-east-2 (Ohio)
+Username:                 ubuntu
+Project Directory:        /home/ubuntu/codebreak
+Virtual Environment:      /home/ubuntu/codebreak/venv
+
+================================================================================
+DATABASE CONNECTION STRINGS
+================================================================================
+
+PostgreSQL Command Line (from EC2):
+------------------------------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db
+
+
+Connection String (for apps):
+-----------------------------
+postgresql://codebreak_admin:%w>Iq3ry!@codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com:5432/codebreak_db
+
+
+Python psycopg2 Connection:
+---------------------------
+import psycopg2
+conn = psycopg2.connect(
+    host="codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com",
+    port=5432,
+    database="codebreak_db",
+    user="codebreak_admin",
+    password="%w>Iq3ry!"
+)
+
+
+GUI Tool Connection (DBeaver, pgAdmin, TablePlus):
+--------------------------------------------------
+Host:       codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com
+Port:       5432
+Database:   codebreak_db
+Username:   codebreak_admin
+Password:   %w>Iq3ry!
+SSL Mode:   prefer (or disable for testing)
+
+================================================================================
+ENVIRONMENT VARIABLES (.env file location: /home/ubuntu/codebreak/.env)
+================================================================================
+
+DB_HOST=codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com
+DB_NAME=codebreak_db
+DB_USER=codebreak_admin
+DB_PASSWORD=%w>Iq3ry!
+DB_PORT=5432
+
+================================================================================
+DATABASE SCHEMA
+================================================================================
+
+Total Tables: 12
+
+Core Tables:
+-----------
+1.  users                - User authentication and accounts
+2.  players              - Player game state and inventory
+3.  leaderboard          - Global and game-specific leaderboards
+4.  active_games         - Currently active multiplayer game sessions
+5.  game_players         - Players in each game session
+6.  game_sessions        - Completed game history
+7.  player_stats         - Aggregate player statistics
+8.  achievements         - Achievement definitions
+9.  player_achievements  - Player achievement unlocks
+
+Additional Tables:
+-----------------
+10. chat_messages        - In-game chat history
+11. items                - World items and pickups
+12. game_events          - Game event logs for analytics
+
+Database Views:
+--------------
+- v_global_leaderboard      - Global leaderboard with rankings
+- v_game_leaderboards       - Game-specific leaderboards
+- v_active_game_summary     - Active games summary
+
+================================================================================
+KEY FEATURES IMPLEMENTED
+================================================================================
+
+✅ Game-Specific Leaderboards
+   - One score per player per game
+   - Unique constraint: idx_leaderboard_unique_player_game
+
+✅ Global Leaderboards
+   - One global score per player
+   - Unique constraint: idx_leaderboard_unique_player_global
+
+✅ Foreign Key Constraints
+   - Data integrity enforced across all tables
+   - Cascading deletes configured
+
+✅ Optimized Indexes
+   - Performance indexes on all major query columns
+   - Composite indexes for common queries
+
+✅ Achievements System
+   - 6 default achievements loaded
+   - Tracks unlock timestamps
+
+✅ Auto-Migration on Startup
+   - Server automatically maintains schema
+   - Idempotent migrations
+
+❌ Resource Sharing (REMOVED)
+   - Feature disabled and removed from codebase
+
+================================================================================
+DEFAULT ACHIEVEMENTS
+================================================================================
+
+1. First Blood            - Defeat your first enemy (10 points)
+2. Score Master           - Reach a score of 1000 (25 points)
+3. Survivor               - Survive for 10 minutes (50 points)
+4. Resource Hoarder       - Collect 100 resources (15 points)
+5. Legendary Collector    - Collect 500 resources (50 points)
+6. Victory Royale         - Win your first game (100 points)
+
+================================================================================
+APPLICATION ENDPOINTS
+================================================================================
+
+Base URL:                 http://3.19.244.138:8000
+
+Public Endpoints:
+----------------
+/                         - Welcome message
+/login                    - User login page
+/register                 - User registration page
+/web-login                - Web form login handler
+/web-register             - Web form registration handler
+
+Game Endpoints:
+--------------
+/play-game                - Game launch instructions
+/leaderboard              - Get leaderboard (requires auth)
+/leaderboard/public       - Public leaderboard (no auth)
+/leaderboard/game/{id}    - Game-specific leaderboard
+/players/{username}       - Get player info
+
+Admin Endpoints:
+---------------
+/admin                    - Admin login page
+/db-viewer                - Database viewer (requires admin auth)
+                           Username: admin
+                           Password: L3igh-@Ann22
+
+WebSocket:
+---------
+/ws/{username}            - Real-time game updates
+
+================================================================================
+USEFUL COMMANDS
+================================================================================
+
+Connect to Database:
+-------------------
+cd /home/ubuntu/codebreak/backend
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db
+
+
+List All Tables:
+---------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db -c "\dt"
+
+
+View Table Structure:
+--------------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db -c "\d table_name"
+
+
+Query Data:
+----------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db -c "SELECT * FROM achievements;"
+
+
+Run Migration:
+-------------
+cd /home/ubuntu/codebreak/backend
+python migrate_database.py
+
+
+Test Schema:
+-----------
+cd /home/ubuntu/codebreak/backend
+python test_schema.py
+
+
+Restart Service:
+---------------
+sudo systemctl restart codebreak
+sudo systemctl status codebreak
+sudo tail -f /var/log/codebreak-error.log
+
+
+Deploy Updates:
+--------------
+cd /home/ubuntu/codebreak
+git pull origin master
+./backend/deploy.sh
+
+
+Quick Restart:
+-------------
+cd /home/ubuntu/codebreak
+./backend/restart.sh
+
+================================================================================
+BACKUP AND RESTORE
+================================================================================
+
+Create Backup:
+-------------
+PGPASSWORD='%w>Iq3ry!' pg_dump -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db > backup_$(date +%Y%m%d_%H%M%S).sql
+
+
+Restore Backup:
+--------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db < backup_file.sql
+
+
+Backup Specific Table:
+---------------------
+PGPASSWORD='%w>Iq3ry!' pg_dump -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db -t users > users_backup.sql
+
+================================================================================
+SECURITY GROUPS & NETWORK
+================================================================================
+
+RDS Security Group:
+------------------
+- Allows inbound PostgreSQL (port 5432) from EC2 instance
+- EC2 private IP: 172.31.21.224
+- Or allows from EC2 security group
+
+EC2 Security Group:
+------------------
+- Allows inbound HTTP (port 80)
+- Allows inbound HTTPS (port 443)
+- Allows inbound custom TCP (port 8000) for game server
+- Allows inbound SSH (port 22)
+
+VPC Configuration:
+-----------------
+- Both EC2 and RDS in same VPC (us-east-2)
+- Private communication between EC2 and RDS
+- Public access to EC2 for game clients
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Check if RDS is accessible from EC2:
+------------------------------------
+telnet codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com 5432
+# OR
+nc -zv codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com 5432
+
+
+Test Database Connection:
+-------------------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d postgres -c "\l"
+
+
+Check Server Logs:
+-----------------
+sudo tail -100 /var/log/codebreak-error.log
+sudo tail -100 /var/log/codebreak-access.log
+
+
+View Service Status:
+-------------------
+sudo systemctl status codebreak
+sudo journalctl -u codebreak -n 50
+
+
+Test API:
+--------
+curl http://localhost:8000/
+curl http://3.19.244.138:8000/
+
+
+Check Environment Variables:
+---------------------------
+cd /home/ubuntu/codebreak
+cat .env
+
+
+Verify Python Dependencies:
+--------------------------
+cd /home/ubuntu/codebreak
+source venv/bin/activate
+pip list | grep psycopg2
+
+================================================================================
+DATABASE MIGRATION FILES
+================================================================================
+
+Location: /home/ubuntu/codebreak/backend/
+
+init_database.sql       - Complete schema definition (fresh installs)
+migrate_database.py     - Incremental migration script
+test_schema.py          - Schema verification script
+server_postgres.py      - Main server with auto-migration
+
+Migration Strategy:
+------------------
+1. server_postgres.py runs auto-migrations on startup (silent)
+2. deploy.sh runs migrate_database.py during deployment
+3. test_schema.py can verify schema correctness
+4. init_database.sql for fresh database setup
+
+================================================================================
+PERFORMANCE TIPS
+================================================================================
+
+Monitor Slow Queries:
+--------------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db -c "SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;"
+
+
+Check Table Sizes:
+-----------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db -c "SELECT tablename, pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size FROM pg_tables WHERE schemaname = 'public' ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;"
+
+
+Analyze Tables:
+--------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db -c "ANALYZE;"
+
+
+Vacuum Database:
+---------------
+PGPASSWORD='%w>Iq3ry!' psql -h codebreak-db.cloq4saoe3mo.us-east-2.rds.amazonaws.com -U codebreak_admin -d codebreak_db -c "VACUUM ANALYZE;"
+
+================================================================================
+IMPORTANT NOTES
+================================================================================
+
+1. Resource Sharing Feature REMOVED
+   - resource_transfers table no longer used
+   - All related endpoints removed from API
+   - Migration scripts updated accordingly
+
+2. Game-Specific Leaderboards Active
+   - Each game session can have its own leaderboard
+   - Global leaderboard also maintained
+   - Unique constraints prevent duplicate entries
+
+3. Auto-Migration on Startup
+   - Server automatically applies schema updates
+   - Idempotent - safe to run multiple times
+   - Check logs for migration status
+
+4. Security
+   - Never commit credentials to git
+   - .env file contains sensitive information
+   - Database password should be rotated periodically
+
+5. Monitoring
+   - AWS RDS provides built-in monitoring
+   - CloudWatch metrics available
+   - Enable automated backups in RDS console
+
+================================================================================
+CONTACT & SUPPORT
+================================================================================
+
+Project Repository:       https://github.com/Leighthann/codebreak
+AWS Console:             https://console.aws.amazon.com/
+RDS Dashboard:           https://console.aws.amazon.com/rds/ (us-east-2)
+EC2 Dashboard:           https://console.aws.amazon.com/ec2/ (us-east-2)
+
+================================================================================
+END OF DOCUMENT
+================================================================================
