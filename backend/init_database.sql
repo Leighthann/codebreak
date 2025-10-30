@@ -1,5 +1,7 @@
 -- CodeBreak Database Schema
 -- Complete schema for multiplayer game with game-specific leaderboards
+-- Compatible with server_postgres.py and migrate_database.py
+-- Resource sharing feature REMOVED
 
 -- ============================================
 -- USERS & AUTHENTICATION
@@ -83,22 +85,20 @@ CREATE INDEX IF NOT EXISTS idx_game_players_username ON game_players(username);
 
 -- Game session history (for completed games)
 CREATE TABLE IF NOT EXISTS game_sessions (
-    id SERIAL PRIMARY KEY,
-    game_id VARCHAR(255) NOT NULL,
-    username VARCHAR(50) NOT NULL,
-    start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    end_time TIMESTAMP,
-    final_score INTEGER DEFAULT 0,
-    final_wave INTEGER DEFAULT 0,
-    survival_time FLOAT DEFAULT 0,
-    enemies_defeated INTEGER DEFAULT 0,
-    resources_collected JSONB,
-    FOREIGN KEY (username) REFERENCES users(username)
+    session_id SERIAL PRIMARY KEY,
+    game_id VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    duration_seconds INTEGER,
+    total_players INTEGER DEFAULT 0,
+    winner_username VARCHAR(255),
+    game_mode VARCHAR(50) DEFAULT 'standard',
+    FOREIGN KEY (winner_username) REFERENCES players(username),
+    FOREIGN KEY (game_id) REFERENCES active_games(game_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_game_sessions_game_id ON game_sessions(game_id);
-CREATE INDEX IF NOT EXISTS idx_game_sessions_username ON game_sessions(username);
-CREATE INDEX IF NOT EXISTS idx_game_sessions_end_time ON game_sessions(end_time DESC);
+CREATE INDEX IF NOT EXISTS idx_game_sessions_winner ON game_sessions(winner_username);
 
 -- ============================================
 -- LEADERBOARDS
@@ -125,35 +125,12 @@ CREATE INDEX IF NOT EXISTS idx_leaderboard_date ON leaderboard(date DESC);
 
 -- Unique constraint: one entry per player per game (or global)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_unique_player_game 
-ON leaderboard(username, COALESCE(game_id, '')) 
+ON leaderboard(username, game_id) 
 WHERE game_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_unique_player_global 
 ON leaderboard(username) 
 WHERE game_id IS NULL;
-
--- ============================================
--- RESOURCE SHARING & TRANSFERS
--- ============================================
-
--- Resource transfers between players
-CREATE TABLE IF NOT EXISTS resource_transfers (
-    id SERIAL PRIMARY KEY,
-    game_id VARCHAR(255) NOT NULL,
-    from_username VARCHAR(50) NOT NULL,
-    to_username VARCHAR(50) NOT NULL,
-    resource_type VARCHAR(50) NOT NULL,
-    amount INTEGER NOT NULL,
-    transferred_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (from_username) REFERENCES players(username) ON DELETE CASCADE,
-    FOREIGN KEY (to_username) REFERENCES players(username) ON DELETE CASCADE,
-    FOREIGN KEY (game_id) REFERENCES active_games(game_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_resource_transfers_game_id ON resource_transfers(game_id);
-CREATE INDEX IF NOT EXISTS idx_resource_transfers_from ON resource_transfers(from_username);
-CREATE INDEX IF NOT EXISTS idx_resource_transfers_to ON resource_transfers(to_username);
-CREATE INDEX IF NOT EXISTS idx_resource_transfers_time ON resource_transfers(transferred_at DESC);
 
 -- ============================================
 -- GAME WORLD & ITEMS
@@ -185,19 +162,18 @@ CREATE INDEX IF NOT EXISTS idx_items_position ON items(x, y);
 
 -- Player statistics and achievements
 CREATE TABLE IF NOT EXISTS player_stats (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
+    stat_id SERIAL PRIMARY KEY,
+    username VARCHAR(255) UNIQUE NOT NULL,
     total_games_played INTEGER DEFAULT 0,
     total_games_won INTEGER DEFAULT 0,
     total_score INTEGER DEFAULT 0,
-    highest_wave INTEGER DEFAULT 0,
-    longest_survival_time FLOAT DEFAULT 0,
-    total_enemies_defeated INTEGER DEFAULT 0,
-    total_resources_collected INTEGER DEFAULT 0,
-    favorite_weapon VARCHAR(100),
-    playtime_seconds INTEGER DEFAULT 0,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
+    highest_score INTEGER DEFAULT 0,
+    total_playtime_seconds INTEGER DEFAULT 0,
+    enemies_defeated INTEGER DEFAULT 0,
+    resources_collected INTEGER DEFAULT 0,
+    last_played TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (username) REFERENCES players(username) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_stats_username ON player_stats(username);
@@ -205,29 +181,27 @@ CREATE INDEX IF NOT EXISTS idx_player_stats_total_score ON player_stats(total_sc
 
 -- Achievements table
 CREATE TABLE IF NOT EXISTS achievements (
-    id SERIAL PRIMARY KEY,
-    achievement_key VARCHAR(100) UNIQUE NOT NULL,
-    name VARCHAR(255) NOT NULL,
+    achievement_id SERIAL PRIMARY KEY,
+    achievement_name VARCHAR(100) UNIQUE NOT NULL,
     description TEXT,
-    icon VARCHAR(255),
     points INTEGER DEFAULT 0,
-    category VARCHAR(50),
+    icon_path VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Player achievements junction table
 CREATE TABLE IF NOT EXISTS player_achievements (
     id SERIAL PRIMARY KEY,
-    username VARCHAR(50) NOT NULL,
-    achievement_key VARCHAR(100) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    achievement_id INTEGER NOT NULL,
     unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE,
-    FOREIGN KEY (achievement_key) REFERENCES achievements(achievement_key) ON DELETE CASCADE,
-    UNIQUE(username, achievement_key)
+    FOREIGN KEY (username) REFERENCES players(username) ON DELETE CASCADE,
+    FOREIGN KEY (achievement_id) REFERENCES achievements(achievement_id) ON DELETE CASCADE,
+    UNIQUE(username, achievement_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_achievements_username ON player_achievements(username);
-CREATE INDEX IF NOT EXISTS idx_player_achievements_unlocked ON player_achievements(unlocked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_player_achievements_achievement ON player_achievements(achievement_id);
 
 -- ============================================
 -- CHAT & COMMUNICATION
@@ -360,17 +334,15 @@ $$ LANGUAGE plpgsql;
 -- INITIAL DATA (Optional)
 -- ============================================
 
--- Insert some default achievements
-INSERT INTO achievements (achievement_key, name, description, points, category) VALUES
-    ('first_blood', 'First Blood', 'Defeat your first enemy', 10, 'combat'),
-    ('wave_5', 'Wave Warrior', 'Reach wave 5', 25, 'survival'),
-    ('wave_10', 'Survivor', 'Reach wave 10', 50, 'survival'),
-    ('collector', 'Collector', 'Collect 100 resources', 20, 'resources'),
-    ('craftsman', 'Craftsman', 'Craft your first item', 15, 'crafting'),
-    ('sharpshooter', 'Sharpshooter', 'Defeat 50 enemies', 30, 'combat'),
-    ('veteran', 'Veteran', 'Play 10 games', 25, 'general'),
-    ('champion', 'Champion', 'Win a multiplayer game', 100, 'multiplayer')
-ON CONFLICT (achievement_key) DO NOTHING;
+-- Insert default achievements (matching server_postgres.py)
+INSERT INTO achievements (achievement_name, description, points) VALUES
+    ('First Blood', 'Defeat your first enemy', 10),
+    ('Score Master', 'Reach a score of 1000', 25),
+    ('Survivor', 'Survive for 10 minutes', 50),
+    ('Resource Hoarder', 'Collect 100 resources', 15),
+    ('Legendary Collector', 'Collect 500 resources', 50),
+    ('Victory Royale', 'Win your first game', 100)
+ON CONFLICT (achievement_name) DO NOTHING;
 
 -- ============================================
 -- GRANTS (Adjust based on your user)
