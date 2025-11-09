@@ -637,9 +637,43 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Database connection failed: {e}")
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the CodeBreak API!"}
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    """Serve the home page with real database statistics"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get total active players
+        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM players")
+        total_players = cursor.fetchone()[0] or 0
+        
+        # Get total games played
+        cursor.execute("SELECT COUNT(*) FROM game_sessions")
+        total_games = cursor.fetchone()[0] or 0
+        
+        # Get total achievements
+        cursor.execute("SELECT COUNT(*) FROM achievements")
+        total_achievements = cursor.fetchone()[0] or 0
+        
+        cursor.close()
+        conn.close()
+        
+        return templates.TemplateResponse("home.html", {
+            "request": request,
+            "total_players": total_players,
+            "total_games": total_games,
+            "total_achievements": total_achievements
+        })
+    except Exception as e:
+        logger.error(f"Error loading home page: {e}")
+        # Return with default values if database query fails
+        return templates.TemplateResponse("home.html", {
+            "request": request,
+            "total_players": "0",
+            "total_games": "0",
+            "total_achievements": "6"
+        })
 
 # Authentication
 @app.post("/token", response_model=Token)
