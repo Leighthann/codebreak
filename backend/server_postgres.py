@@ -930,14 +930,13 @@ async def web_login(request: Request):
         logger.error(f"Web login error: {str(e)}")
         return RedirectResponse(url=f"/login?message=An+error+occurred", status_code=303)
 
-# Optional: Registration page endpoint
+# Redirect /register to /login (both forms are on login.html)
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request, message: Optional[str] = None):
-    """Render the registration page"""
-    return templates.TemplateResponse("register.html", {
-        "request": request,
-        "message": message
-    })
+    """Redirect to login page which has both login and register tabs"""
+    if message:
+        return RedirectResponse(url=f"/login?message={message}", status_code=303)
+    return RedirectResponse(url="/login", status_code=303)
 
 @app.post("/web-register")
 async def web_register(request: Request):
@@ -950,10 +949,10 @@ async def web_register(request: Request):
         
         # Validate input
         if not username or not password:
-            return RedirectResponse(url="/register?message=Username+and+password+required", status_code=303)
+            return RedirectResponse(url="/login?message=Username+and+password+required", status_code=303)
             
         if password != confirm_password:
-            return RedirectResponse(url="/register?message=Passwords+do+not+match", status_code=303)
+            return RedirectResponse(url="/login?message=Passwords+do+not+match", status_code=303)
         
         # Create user using existing function
         user_data = UserCreate(username=str(username), password=str(password))
@@ -965,7 +964,7 @@ async def web_register(request: Request):
             # URL encode the error detail
             import urllib.parse
             error_message = urllib.parse.quote(str(e.detail))
-            return RedirectResponse(url=f"/register?message={error_message}", status_code=303)
+            return RedirectResponse(url=f"/login?message={error_message}", status_code=303)
             
     except Exception as e:
         import traceback
@@ -974,7 +973,7 @@ async def web_register(request: Request):
         logger.error(f"Full traceback: {error_trace}")
         import urllib.parse
         error_message = urllib.parse.quote(f"Registration failed: {str(e)}")
-        return RedirectResponse(url=f"/register?message={error_message}", status_code=303)
+        return RedirectResponse(url=f"/login?message={error_message}", status_code=303)
 
 @app.websocket("/ws/{username}")
 async def websocket_endpoint(websocket: WebSocket, username: str, token: Optional[str] = None, game_id: Optional[str] = None):
