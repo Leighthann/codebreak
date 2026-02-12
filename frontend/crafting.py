@@ -34,7 +34,7 @@ class CraftingSystem:
         self.font_md = font_md
         self.show_crafting = False
         
-        # Define crafting recipes
+        # Define crafting recipes - Only Data Shield is available
         self.recipes = [
             CraftingRecipe(
                 name="Data Shield",
@@ -42,21 +42,8 @@ class CraftingSystem:
                 requirements={"code_fragments": 5, "energy_cores": 2},
                 effect={"type": "shield", "duration": 10, "defense": 50},
                 icon_color=CYAN
-            ),
-            CraftingRecipe(
-                name="Hack Tool",
-                description="Confuses nearby enemies briefly",
-                requirements={"code_fragments": 3, "data_shards": 4},
-                effect={"type": "confuse", "duration": 5, "range": 150},
-                icon_color=NEON_GREEN
-            ),
-            CraftingRecipe(
-                name="Energy Sword",
-                description="Powerful melee weapon",
-                requirements={"energy_cores": 3, "data_shards": 3},
-                effect={"type": "weapon", "damage": 30, "duration": 15},
-                icon_color=NEON_BLUE
             )
+            # Note: Hack Tool and Energy Sword removed - crafting disabled
         ]
     
     def toggle_menu(self) -> bool:
@@ -188,7 +175,7 @@ class CraftingSystem:
         
         # Instructions
         instructions = [
-            "Press 1-3 to craft items",
+            "Press 1 to craft Data Shield",
             "Press C or ESC to close",
             "Press E to use equipped tool"
         ]
